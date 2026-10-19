@@ -119,23 +119,24 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="text-[11px] font-mono hidden md:inline">{historyCount}世代</span>
           </button>
 
-          {/* Due date sort button */}
+          {/* Due date sort button (visible on mobile and desktop) */}
           <button
             type="button"
             onClick={onSortDueDates}
             title="各区切りの中を #MM/DD 昇順で並び替え"
-            className="hidden sm:flex items-center gap-1 px-2 sm:px-2.5 py-1 text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white rounded-md shadow-sm transition-all active:scale-95"
+            className="flex items-center gap-1 px-2 sm:px-2.5 py-1 text-xs font-semibold bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white rounded-md shadow-sm transition-all active:scale-95 flex-shrink-0"
           >
             <ArrowUpDown className="w-3.5 h-3.5" />
+            <span className="inline md:hidden">ソート</span>
             <span className="hidden md:inline">期日ソート</span>
           </button>
 
-          {/* Sync / Save Button (Ctrl+S) */}
+          {/* Sync / Save Button (Ctrl+S) - Hidden on mobile as QuickToolbar has Save button */}
           <button
             type="button"
             onClick={onManualSync}
             title="左右を同期・保存 (Ctrl+S)"
-            className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 text-xs font-medium rounded-md border transition-all ${
+            className={`hidden sm:flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 text-xs font-medium rounded-md border transition-all ${
               isSaved
                 ? 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
                 : 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700 font-semibold shadow-sm animate-pulse'
