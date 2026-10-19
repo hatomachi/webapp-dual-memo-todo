@@ -686,14 +686,14 @@ export const App: React.FC = () => {
 
       {/* Main Dual Memo Workspace */}
       <main
-        className={`flex-1 w-full mx-auto overflow-hidden ${
+        className={`flex-1 min-h-0 w-full mx-auto overflow-hidden ${
           viewport.isKeyboardOpen ? 'p-0 sm:p-3' : 'p-1.5 sm:p-3'
         }`}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 h-full">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 h-full min-h-0">
           {/* Left Pane (Category axis: !inbox) */}
           <div
-            className={`h-full ${
+            className={`h-full min-h-0 ${
               activeMobilePane === 'category' ? 'block' : 'hidden sm:block'
             }`}
           >
@@ -718,7 +718,7 @@ export const App: React.FC = () => {
 
           {/* Right Pane (Theme axis: [Uncategorized]) */}
           <div
-            className={`h-full ${
+            className={`h-full min-h-0 ${
               activeMobilePane === 'theme' ? 'block' : 'hidden sm:block'
             }`}
           >

@@ -70,21 +70,43 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
     ref
   ) => {
     const [isNavOpen, setIsNavOpen] = useState<boolean>(false);
-    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const [scrollbarWidth, setScrollbarWidth] = useState<number>(0);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const backdropRef = useRef<HTMLDivElement>(null);
-    const pointerDownScrollTopRef = useRef<number | null>(null);
 
     const sections = useMemo(() => {
       return extractSectionsFromText(text, type);
     }, [text, type]);
 
-    // Ensure the active caret line is visible within the single scroll container
+    // Keep backdrop scroll in exact 1:1 sync with native textarea scroll
+    const syncBackdropScroll = useCallback(() => {
+      const textarea = textareaRef.current;
+      const backdrop = backdropRef.current;
+      if (!textarea || !backdrop) return;
+      backdrop.scrollTop = textarea.scrollTop;
+      backdrop.scrollLeft = textarea.scrollLeft;
+    }, []);
+
+    // Track textarea clientWidth vs offsetWidth to eliminate word-wrap drift on non-overlay scrollbars
+    useLayoutEffect(() => {
+      const updateScrollbar = () => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        const diff = textarea.offsetWidth - textarea.clientWidth;
+        setScrollbarWidth(Math.max(0, diff));
+        syncBackdropScroll();
+      };
+
+      updateScrollbar();
+      window.addEventListener('resize', updateScrollbar);
+      return () => window.removeEventListener('resize', updateScrollbar);
+    }, [text, syncBackdropScroll]);
+
+    // Ensure the active caret line is visible within textarea
     const ensureCaretVisible = useCallback(() => {
       const textarea = textareaRef.current;
-      const container = scrollContainerRef.current;
       const backdrop = backdropRef.current;
-      if (!textarea || !container || !backdrop) return;
+      if (!textarea || !backdrop) return;
       if (document.activeElement !== textarea) return;
 
       const caretPos = textarea.selectionEnd ?? 0;
@@ -95,37 +117,17 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
 
       const lineTop = lineEl.offsetTop;
       const lineBottom = lineTop + lineEl.offsetHeight;
-      const viewTop = container.scrollTop;
-      const viewBottom = viewTop + container.clientHeight;
-      const padding = 36; // 1+ line of breathing room above bottom toolbar
+      const viewTop = textarea.scrollTop;
+      const viewBottom = viewTop + textarea.clientHeight;
+      const padding = 26; // 1+ line (20px) of breathing room above bottom toolbar
 
-      if (lineTop < viewTop + 12) {
-        container.scrollTop = Math.max(0, lineTop - 12);
+      if (lineTop < viewTop + 8) {
+        textarea.scrollTop = Math.max(0, lineTop - 8);
       } else if (lineBottom + padding > viewBottom) {
-        container.scrollTop = Math.max(0, lineBottom + padding - container.clientHeight);
+        textarea.scrollTop = Math.max(0, lineBottom + padding - textarea.clientHeight);
       }
-    }, []);
-
-    // Prevent any internal textarea scroll offset; forward it to the parent scroll container
-    const normalizeTextareaInternalScroll = useCallback(() => {
-      const textarea = textareaRef.current;
-      const container = scrollContainerRef.current;
-      if (!textarea) return;
-
-      if (textarea.scrollTop !== 0) {
-        if (container) {
-          container.scrollTop += textarea.scrollTop;
-        }
-        textarea.scrollTop = 0;
-      }
-      if (textarea.scrollLeft !== 0) {
-        textarea.scrollLeft = 0;
-      }
-    }, []);
-
-    useLayoutEffect(() => {
-      normalizeTextareaInternalScroll();
-    }, [text, normalizeTextareaInternalScroll]);
+      syncBackdropScroll();
+    }, [syncBackdropScroll]);
 
     // Keep active caret visible after layout settles when virtual keyboard opens or resizes
     useEffect(() => {
@@ -139,9 +141,10 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
         cancelAnimationFrame(raf1);
         cancelAnimationFrame(raf2);
         raf1 = requestAnimationFrame(() => {
-          normalizeTextareaInternalScroll();
+          syncBackdropScroll();
           ensureCaretVisible();
           raf2 = requestAnimationFrame(() => {
+            syncBackdropScroll();
             ensureCaretVisible();
           });
         });
@@ -155,15 +158,16 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
         vv.removeEventListener('resize', handleViewportChange);
         vv.removeEventListener('scroll', handleViewportChange);
       };
-    }, [ensureCaretVisible, normalizeTextareaInternalScroll]);
+    }, [ensureCaretVisible, syncBackdropScroll]);
 
     // Re-check caret visibility when header collapses/expands on keyboard state change
     useEffect(() => {
       const raf = requestAnimationFrame(() => {
+        syncBackdropScroll();
         ensureCaretVisible();
       });
       return () => cancelAnimationFrame(raf);
-    }, [isKeyboardOpen, ensureCaretVisible]);
+    }, [isKeyboardOpen, ensureCaretVisible, syncBackdropScroll]);
 
     // Expose manipulation methods to parent (for QuickToolbar)
     useImperativeHandle(ref, () => ({
@@ -183,6 +187,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
         requestAnimationFrame(() => {
           textarea.focus({ preventScroll: true });
           textarea.setSelectionRange(targetCursor, targetCursor);
+          syncBackdropScroll();
           ensureCaretVisible();
         });
       },
@@ -208,6 +213,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
         requestAnimationFrame(() => {
           textarea.focus({ preventScroll: true });
           textarea.setSelectionRange(newCursorPos, newCursorPos);
+          syncBackdropScroll();
           ensureCaretVisible();
         });
       },
@@ -221,22 +227,21 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       },
     }));
 
-    // Jump to section line and scroll smoothly using exact DOM line offset
+    // Jump to section line and scroll smoothly within native textarea
     const handleSelectSection = (charIndex: number, lineIndex: number) => {
       const textarea = textareaRef.current;
-      const container = scrollContainerRef.current;
       const backdrop = backdropRef.current;
-      if (!textarea || !container) return;
+      if (!textarea) return;
 
       textarea.focus({ preventScroll: true });
       textarea.setSelectionRange(charIndex, charIndex);
 
       const lineEl = backdrop?.children[lineIndex] as HTMLElement | undefined;
       const targetScrollTop = lineEl
-        ? Math.max(0, lineEl.offsetTop - 12)
-        : Math.max(0, (lineIndex - 1) * 28);
+        ? Math.max(0, lineEl.offsetTop - 8)
+        : Math.max(0, (lineIndex - 1) * 20);
 
-      container.scrollTo({
+      textarea.scrollTo({
         top: targetScrollTop,
         behavior: 'smooth',
       });
@@ -307,36 +312,10 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       }
     };
 
-    const handlePointerDown = () => {
-      if (
-        document.activeElement !== textareaRef.current &&
-        scrollContainerRef.current
-      ) {
-        pointerDownScrollTopRef.current = scrollContainerRef.current.scrollTop;
-      } else {
-        pointerDownScrollTopRef.current = null;
-      }
-    };
-
     const handleFocus = () => {
-      if (
-        pointerDownScrollTopRef.current !== null &&
-        scrollContainerRef.current
-      ) {
-        const savedTop = pointerDownScrollTopRef.current;
-        scrollContainerRef.current.scrollTop = savedTop;
-        requestAnimationFrame(() => {
-          if (scrollContainerRef.current) {
-            scrollContainerRef.current.scrollTop = savedTop;
-          }
-          pointerDownScrollTopRef.current = null;
-          ensureCaretVisible();
-        });
-      } else {
-        requestAnimationFrame(() => {
-          ensureCaretVisible();
-        });
-      }
+      requestAnimationFrame(() => {
+        ensureCaretVisible();
+      });
       onFocus();
     };
 
@@ -400,7 +379,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
         </div>
 
         {/* Main Body: SectionNav & Notepad Editor */}
-        <div className="relative flex-1 flex overflow-hidden bg-white">
+        <div className="relative flex-1 min-h-0 flex overflow-hidden bg-white">
           {/* Section Navigation: Desktop = side column, Mobile = slide-over drawer */}
           {/* Mobile backdrop */}
           {isNavOpen && (
@@ -427,92 +406,87 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
             />
           </div>
 
-          {/* Single Scroll Container holding both Backdrop and Textarea in lockstep */}
-          <div
-            ref={scrollContainerRef}
-            className="notepad-scroll-container relative flex-1 h-full overflow-y-auto overflow-x-hidden bg-white"
-          >
-            <div className="notepad-grid">
-              {/* Backdrop Layer (in-flow inside grid cell 1/1, stretches container height) */}
-              <div
-                ref={backdropRef}
-                aria-hidden="true"
-                className="notepad-layer overflow-hidden pointer-events-none select-none pt-3 pb-16 pl-4 sm:pl-6 pr-3 sm:pr-4 text-transparent"
-              >
-                {lines.map((line, idx) => {
-                  const isHeader =
-                    type === 'category'
-                      ? isCategoryHeader(line)
-                      : isThemeHeader(line);
+          {/* Native Scrollable Notepad Area */}
+          <div className="relative flex-1 min-h-0 h-full overflow-hidden bg-white">
+            {/* Backdrop Layer (mirrors textarea scroll and content padding) */}
+            <div
+              ref={backdropRef}
+              aria-hidden="true"
+              style={{ right: `${scrollbarWidth}px` }}
+              className="notepad-layer absolute inset-y-0 left-0 overflow-hidden pointer-events-none select-none text-transparent pt-2.5 pb-16 pl-3 sm:pl-4 pr-3 sm:pr-4"
+            >
+              {lines.map((line, idx) => {
+                const isHeader =
+                  type === 'category'
+                    ? isCategoryHeader(line)
+                    : isThemeHeader(line);
 
-                  if (isHeader) {
-                    return (
-                      <div
-                        key={idx}
-                        className="notepad-line bg-yellow-100/90 -mx-2 px-2 rounded-sm"
-                      >
-                        {line || '\u200B'}
-                      </div>
-                    );
-                  }
-
-                  if (isCommentLine(line)) {
-                    const indentMatch = line.match(/^[ \t\u3000]+/);
-                    const indentStr = indentMatch ? indentMatch[0] : '';
-                    const isNarrowIndent = indentStr === ' ';
-
-                    return (
-                      <div
-                        key={idx}
-                        className="notepad-line relative bg-slate-100/90 -mx-1 px-1 rounded-sm"
-                      >
-                        <span
-                          aria-hidden="true"
-                          className={`absolute top-0 text-slate-400 font-normal select-none pointer-events-none ${
-                            isNarrowIndent ? '-left-2' : 'left-1'
-                          }`}
-                        >
-                          ↳
-                        </span>
-                        {line || '\u200B'}
-                      </div>
-                    );
-                  }
-
+                if (isHeader) {
                   return (
-                    <div key={idx} className="notepad-line">
+                    <div
+                      key={idx}
+                      className="notepad-line bg-yellow-100/90 -mx-1 px-1 rounded-sm"
+                    >
                       {line || '\u200B'}
                     </div>
                   );
-                })}
-              </div>
+                }
 
-              {/* Foreground Native Textarea (shares grid cell 1/1, never scrolls independently) */}
-              <textarea
-                ref={textareaRef}
-                value={text}
-                onChange={(e) => {
-                  onChangeText(e.target.value);
-                  requestAnimationFrame(() => {
-                    normalizeTextareaInternalScroll();
-                    ensureCaretVisible();
-                  });
-                }}
-                onScroll={normalizeTextareaInternalScroll}
-                onPointerDown={handlePointerDown}
-                onClick={() => requestAnimationFrame(() => ensureCaretVisible())}
-                onFocus={handleFocus}
-                onBlur={onBlur}
-                onKeyDown={handleKeyDown}
-                onKeyUp={handleKeyUp}
-                placeholder={placeholder}
-                spellCheck={false}
-                autoCapitalize="off"
-                autoComplete="off"
-                autoCorrect="off"
-                className="notepad-layer relative z-10 w-full h-full overflow-hidden pt-3 pb-16 pl-4 sm:pl-6 pr-3 sm:pr-4 text-slate-800 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-300"
-              />
+                if (isCommentLine(line)) {
+                  const indentMatch = line.match(/^[ \t\u3000]+/);
+                  const indentStr = indentMatch ? indentMatch[0] : '';
+                  const isNarrowIndent = indentStr === ' ';
+
+                  return (
+                    <div
+                      key={idx}
+                      className="notepad-line relative bg-slate-100/90 -mx-0.5 px-0.5 rounded-sm"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`absolute top-0 text-[10px] leading-[20px] text-slate-400 font-normal select-none pointer-events-none ${
+                          isNarrowIndent ? '-left-2' : 'left-0.5'
+                        }`}
+                      >
+                        ↳
+                      </span>
+                      {line || '\u200B'}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={idx} className="notepad-line">
+                    {line || '\u200B'}
+                  </div>
+                );
+              })}
             </div>
+
+            {/* Foreground Native Textarea (independent native scrolling) */}
+            <textarea
+              ref={textareaRef}
+              value={text}
+              onChange={(e) => {
+                onChangeText(e.target.value);
+                requestAnimationFrame(() => {
+                  syncBackdropScroll();
+                  ensureCaretVisible();
+                });
+              }}
+              onScroll={syncBackdropScroll}
+              onClick={() => requestAnimationFrame(() => ensureCaretVisible())}
+              onFocus={handleFocus}
+              onBlur={onBlur}
+              onKeyDown={handleKeyDown}
+              onKeyUp={handleKeyUp}
+              placeholder={placeholder}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoComplete="off"
+              autoCorrect="off"
+              className="notepad-layer absolute inset-0 w-full h-full overflow-y-auto overflow-x-hidden pt-2.5 pb-16 pl-3 sm:pl-4 pr-3 sm:pr-4 text-slate-800 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-300"
+            />
           </div>
         </div>
       </div>
