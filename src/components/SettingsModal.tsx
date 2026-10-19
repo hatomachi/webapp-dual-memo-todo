@@ -71,7 +71,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       owner: owner.trim(),
       repo: repo.trim(),
       branch: branch.trim() || 'main',
-      path: path.trim() || 'todo-data.json',
+      path: path.trim().replace(/^\/+/, '') || 'todo-data.json',
       autoSyncOnSave,
     };
     onSaveSettings(newSettings);

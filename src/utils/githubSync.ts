@@ -71,44 +71,54 @@ export const base64ToUtf8 = (base64: string): string => {
 };
 
 /**
- * Fetch remote file SHA directly from GitHub bypassing all browser & CDN caching
+ * Normalize and sanitize GitHub settings to prevent invalid API calls
  */
-export const fetchRemoteSha = async (settings: GitHubSettings): Promise<string | null> => {
-  const { token, owner, repo, branch, path } = settings;
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}&_t=${Date.now()}`;
+export const normalizeGitHubSettings = (settings: GitHubSettings): GitHubSettings => {
+  const owner = (settings.owner || '').trim();
+  const repo = (settings.repo || '').trim();
+  const branch = (settings.branch || '').trim() || 'main';
+  let path = (settings.path || '').trim() || 'todo-data.json';
+  // Strip leading slashes to prevent double slashes in GitHub contents API URLs
+  path = path.replace(/^\/+/, '');
+  const token = (settings.token || '').trim();
+  const autoSyncOnSave = settings.autoSyncOnSave !== false;
 
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github.v3+json',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        Pragma: 'no-cache',
-        'If-None-Match': '',
-      },
-      cache: 'no-store',
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      return data.sha || null;
-    }
-  } catch (err) {
-    console.warn('Failed to fetch remote SHA', err);
-  }
-  return null;
+  return {
+    owner,
+    repo,
+    branch,
+    path,
+    token,
+    autoSyncOnSave,
+  };
 };
 
+export interface RemoteFileInfo {
+  exists: boolean;
+  sha?: string;
+  content?: string;
+}
+
 /**
- * Fetch remote todo-data.json from GitHub repository with strict cache busting
+ * Fetch remote file metadata & content directly from GitHub bypassing browser caches.
+ * Distinguishes cleanly between 404 (file does not exist) and 200 (file exists with SHA).
  */
-export const fetchFromGitHub = async (
-  settings: GitHubSettings
-): Promise<{ payload: RemotePayload; sha: string }> => {
+export const fetchRemoteFileInfo = async (
+  rawSettings: GitHubSettings
+): Promise<RemoteFileInfo> => {
+  const settings = normalizeGitHubSettings(rawSettings);
   const { token, owner, repo, branch, path } = settings;
-  // Always attach timestamp query parameter and no-cache headers to prevent iOS Safari/Chrome stale cache
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}&_t=${Date.now()}`;
+
+  if (!token || !owner || !repo) {
+    throw new Error('GitHub設定（トークン・オーナー・リポジトリ名）が不足しています');
+  }
+
+  const encodedPath = path
+    .split('/')
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join('/');
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}&_t=${Date.now()}`;
 
   const res = await fetch(url, {
     method: 'GET',
@@ -117,45 +127,102 @@ export const fetchFromGitHub = async (
       Accept: 'application/vnd.github.v3+json',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       Pragma: 'no-cache',
-      'If-None-Match': '',
     },
     cache: 'no-store',
   });
 
   if (res.status === 404) {
-    throw new Error('FILE_NOT_FOUND');
+    return { exists: false };
   }
 
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({}));
-    throw new Error(errBody.message || `GitHub API error: ${res.status}`);
+    const msg = errBody.message || `GitHub API error: ${res.status}`;
+    const err: any = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
 
-  const json = await res.json();
-  const rawText = base64ToUtf8(json.content);
+  const data = await res.json();
+  if (Array.isArray(data)) {
+    throw new Error(`指定されたパス (${path}) はディレクトリです。ファイル名を指定してください。`);
+  }
+
+  return {
+    exists: true,
+    sha: data.sha,
+    content: data.content,
+  };
+};
+
+/**
+ * Fetch remote file SHA directly from GitHub bypassing all browser & CDN caching
+ */
+export const fetchRemoteSha = async (rawSettings: GitHubSettings): Promise<string | null> => {
+  try {
+    const info = await fetchRemoteFileInfo(rawSettings);
+    return info.sha || null;
+  } catch (err) {
+    console.warn('Failed to fetch remote SHA', err);
+    return null;
+  }
+};
+
+/**
+ * Fetch remote todo-data.json from GitHub repository with strict cache busting
+ */
+export const fetchFromGitHub = async (
+  rawSettings: GitHubSettings
+): Promise<{ payload: RemotePayload; sha: string }> => {
+  const info = await fetchRemoteFileInfo(rawSettings);
+
+  if (!info.exists || !info.content || !info.sha) {
+    throw new Error('FILE_NOT_FOUND');
+  }
+
+  const rawText = base64ToUtf8(info.content);
   const payload: RemotePayload = JSON.parse(rawText);
 
-  persistLastSha(json.sha);
+  persistLastSha(info.sha);
   persistLastSyncedAt(Date.now());
-  return { payload, sha: json.sha };
+  return { payload, sha: info.sha };
 };
 
 /**
  * Push todo-data.json to GitHub repository (creates or updates).
- * Includes auto-fetch of latest SHA and auto-retry on 409 Conflict.
+ * Resolves remote SHA accurately, prevents missing SHA errors, and auto-retries on conflicts.
  */
 export const pushToGitHub = async (
-  settings: GitHubSettings,
+  rawSettings: GitHubSettings,
   payload: RemotePayload,
   commitMessage?: string
 ): Promise<{ newSha: string }> => {
+  const settings = normalizeGitHubSettings(rawSettings);
   const { token, owner, repo, branch, path } = settings;
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
 
-  // 1. Fetch fresh SHA from GitHub directly
-  let currentSha = await fetchRemoteSha(settings);
-  if (!currentSha) {
-    currentSha = loadLastSha();
+  if (!token || !owner || !repo) {
+    throw new Error('GitHub設定（トークン・オーナー・リポジトリ名）が不足しています');
+  }
+
+  const encodedPath = path
+    .split('/')
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join('/');
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}`;
+
+  // 1. Fetch fresh remote file info (exists & sha)
+  let remoteInfo: RemoteFileInfo;
+  try {
+    remoteInfo = await fetchRemoteFileInfo(settings);
+  } catch (err: any) {
+    console.error('Failed to inspect remote file status before push:', err);
+    throw err;
+  }
+
+  let shaToSend: string | undefined = undefined;
+  if (remoteInfo.exists) {
+    shaToSend = remoteInfo.sha || loadLastSha() || undefined;
   }
 
   const jsonString = JSON.stringify(payload, null, 2);
@@ -164,15 +231,15 @@ export const pushToGitHub = async (
   const now = new Date();
   const defaultMsg = `chore: update dual memo [${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}]`;
 
-  const sendCommit = async (shaToSend?: string | null): Promise<string> => {
+  const sendCommit = async (sha?: string): Promise<string> => {
     const body: any = {
       message: commitMessage || defaultMsg,
       content: contentBase64,
-      branch: branch || 'main',
+      branch,
     };
 
-    if (shaToSend) {
-      body.sha = shaToSend;
+    if (sha) {
+      body.sha = sha;
     }
 
     const res = await fetch(url, {
@@ -198,23 +265,42 @@ export const pushToGitHub = async (
   };
 
   try {
-    const newSha = await sendCommit(currentSha);
+    const newSha = await sendCommit(shaToSend);
     if (newSha) {
       persistLastSha(newSha);
       persistLastSyncedAt(Date.now());
     }
     return { newSha };
   } catch (err: any) {
-    // If conflict (409 does not match SHA), retry once with freshly fetched SHA
-    if (err.status === 409 || (err.message && err.message.includes('does not match'))) {
-      console.warn('SHA conflict detected, re-fetching latest SHA and retrying commit once...');
-      const retrySha = await fetchRemoteSha(settings);
-      const newSha = await sendCommit(retrySha);
-      if (newSha) {
-        persistLastSha(newSha);
-        persistLastSyncedAt(Date.now());
+    // If sha wasn't supplied (422) or conflict (409 does not match SHA), retry once with fresh SHA
+    const isShaMissingError =
+      err.message &&
+      (err.message.includes('"sha" wasn\'t supplied') ||
+        err.message.includes('sha wasn\'t supplied') ||
+        err.message.includes('"sha"'));
+    const isConflict =
+      err.status === 409 ||
+      err.status === 422 ||
+      (err.message && err.message.includes('does not match'));
+
+    if (isShaMissingError || isConflict) {
+      console.warn(
+        'SHA conflict or missing SHA detected, re-fetching latest SHA and retrying commit once...',
+        err.message
+      );
+      try {
+        const retryInfo = await fetchRemoteFileInfo(settings);
+        if (retryInfo.exists && retryInfo.sha) {
+          const newSha = await sendCommit(retryInfo.sha);
+          if (newSha) {
+            persistLastSha(newSha);
+            persistLastSyncedAt(Date.now());
+          }
+          return { newSha };
+        }
+      } catch (retryErr) {
+        console.error('Failed to retry push with fresh SHA:', retryErr);
       }
-      return { newSha };
     }
     throw err;
   }
