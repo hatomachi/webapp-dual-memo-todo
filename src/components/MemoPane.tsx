@@ -14,6 +14,7 @@ import {
   isThemeHeader,
   isCommentLine,
   extractSectionsFromText,
+  getLineDueDateStatus,
   DUE_DATE_REGEX,
 } from '../utils/parser';
 import { SectionNav } from './SectionNav';
@@ -610,7 +611,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                   return (
                     <div
                       key={idx}
-                      className="notepad-line bg-yellow-100/90 -mx-1 px-1 rounded-sm"
+                      className="notepad-line bg-slate-200/80 -mx-1 px-1 rounded-sm"
                     >
                       {line || '\u200B'}
                     </div>
@@ -635,6 +636,29 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                       >
                         ↳
                       </span>
+                      {line || '\u200B'}
+                    </div>
+                  );
+                }
+
+                const dateStatus = getLineDueDateStatus(line);
+                if (dateStatus === 'overdue') {
+                  return (
+                    <div
+                      key={idx}
+                      className="notepad-line bg-rose-100/90 -mx-1 px-1 rounded-sm"
+                    >
+                      {line || '\u200B'}
+                    </div>
+                  );
+                }
+
+                if (dateStatus === 'today') {
+                  return (
+                    <div
+                      key={idx}
+                      className="notepad-line bg-amber-100/90 -mx-1 px-1 rounded-sm"
+                    >
                       {line || '\u200B'}
                     </div>
                   );

@@ -1,4 +1,5 @@
 import { TaskItem, PaneType, SectionItem } from '../types/todo';
+import { checkDueDateStatus, DueDateStatus } from './dateHelper';
 
 /**
  * Generate a short random ID
@@ -66,6 +67,27 @@ export const isSectionHeader = (line: string, paneType: PaneType): boolean => {
   } else {
     return isThemeHeader(line);
   }
+};
+
+/**
+ * Check the due date status of a single line for visual highlighting.
+ * Comments, headers, and empty lines are always 'none'.
+ */
+export const getLineDueDateStatus = (
+  line: string,
+  baseDate: Date = new Date()
+): DueDateStatus => {
+  if (
+    isEmptyLine(line) ||
+    isCommentLine(line) ||
+    isCategoryHeader(line) ||
+    isThemeHeader(line)
+  ) {
+    return 'none';
+  }
+  const match = line.match(DUE_DATE_REGEX);
+  if (!match) return 'none';
+  return checkDueDateStatus(match[0], baseDate);
 };
 
 /**

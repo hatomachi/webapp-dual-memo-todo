@@ -2,6 +2,8 @@
  * Date helper utilities for Quick Date Palette & Calendar Picker
  */
 
+export type DueDateStatus = 'overdue' | 'today' | 'future' | 'none';
+
 export interface DateSuggestion {
   id: string;
   label: string; // e.g. "今日", "明日", "今週金", "来週月"
@@ -10,6 +12,68 @@ export interface DateSuggestion {
   fullDateStr: string; // e.g. "2026/10/20"
   isToday?: boolean;
 }
+
+/**
+ * Determine the status of a due date string (e.g. "10/20", "2026/10/20", "2026-10-20").
+ * Returns:
+ * - 'overdue': Date is strictly before today (based on local date 00:00:00)
+ * - 'today': Date is today
+ * - 'future': Date is strictly after today
+ * - 'none': Invalid or empty date string
+ */
+export const checkDueDateStatus = (
+  dueDateStr: string,
+  baseDate: Date = new Date()
+): DueDateStatus => {
+  if (!dueDateStr) return 'none';
+  const cleanStr = dueDateStr.replace(/^[#＃]/, '').trim();
+  const parts = cleanStr.replace(/-/g, '/').split('/');
+
+  let year = baseDate.getFullYear();
+  let month = 1;
+  let day = 1;
+
+  if (parts.length === 3) {
+    year = parseInt(parts[0], 10);
+    month = parseInt(parts[1], 10);
+    day = parseInt(parts[2], 10);
+  } else if (parts.length === 2) {
+    month = parseInt(parts[0], 10);
+    day = parseInt(parts[1], 10);
+  } else {
+    return 'none';
+  }
+
+  if (
+    isNaN(year) ||
+    isNaN(month) ||
+    isNaN(day) ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31
+  ) {
+    return 'none';
+  }
+
+  const targetDate = new Date(year, month - 1, day);
+  // Verify date validity (e.g. avoid rolling Feb 31 to March 3)
+  if (targetDate.getMonth() !== month - 1 || targetDate.getDate() !== day) {
+    return 'none';
+  }
+
+  const today = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
+  const targetTime = targetDate.getTime();
+  const todayTime = today.getTime();
+
+  if (targetTime < todayTime) {
+    return 'overdue';
+  } else if (targetTime === todayTime) {
+    return 'today';
+  } else {
+    return 'future';
+  }
+};
 
 const JAPANESE_DAYS = ['日', '月', '火', '水', '木', '金', '土'] as const;
 

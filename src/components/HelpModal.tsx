@@ -60,10 +60,21 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
             </div>
 
             <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-              <span className="font-bold text-amber-700">#MM/DD（期日タグ）</span>
+              <span className="font-bold text-amber-700">#MM/DD（期日タグ & 自動ハイライト）</span>
               <p className="font-sans text-slate-600 mt-0.5">
                 タスク行に <code className="bg-slate-200 px-1 py-0.5 rounded font-mono">#10/25</code> と書くと期日として認識され、「期日ソート」で昇順に並び替えられます。
               </p>
+              <div className="mt-1.5 flex flex-wrap gap-2 text-[11px] font-sans">
+                <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded">
+                  ⭐ 今日（黄色）
+                </span>
+                <span className="inline-flex items-center gap-1 bg-rose-100 text-rose-900 border border-rose-300 px-1.5 py-0.5 rounded">
+                  🚨 期限切れ（薄赤）
+                </span>
+                <span className="inline-flex items-center gap-1 bg-slate-200 text-slate-800 border border-slate-300 px-1.5 py-0.5 rounded">
+                  📑 区切り（グレー）
+                </span>
+              </div>
             </div>
 
             <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
