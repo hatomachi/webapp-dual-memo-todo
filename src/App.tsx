@@ -539,38 +539,50 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', onGlobalKeyDown);
   }, [dirtyPane, focusedPane, activeMobilePane, handleCommitChange]);
 
-  const viewportHeight = useVisualViewport();
+  const viewport = useVisualViewport();
 
   return (
     <div
-      className="fixed inset-x-0 top-0 flex flex-col bg-slate-100 overflow-hidden font-sans select-none sm:select-auto"
+      className="fixed inset-x-0 flex flex-col bg-slate-100 overflow-hidden font-sans select-none sm:select-auto"
       style={{
-        height: viewportHeight ? `${viewportHeight}px` : '100dvh',
+        top: 'var(--vv-offset-top, 0px)',
+        height: 'var(--vv-height, 100dvh)',
       }}
     >
-      {/* Header */}
-      <Header
-        onSortDueDates={handleSortDueDates}
-        onManualSync={() => {
-          const targetPane = dirtyPane || focusedPane || activeMobilePane;
-          handleCommitChange(targetPane);
-        }}
-        onToggleHelp={() => setIsHelpOpen(true)}
-        onToggleHistory={() => setIsHistoryOpen(true)}
-        onToggleSettings={() => setIsSettingsOpen(true)}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        historyCount={historyState.snapshots.length}
-        syncStatus={syncStatus}
-        activeMobilePane={activeMobilePane}
-        onChangeMobilePane={setActiveMobilePane}
-        isSaved={dirtyPane === null}
-      />
+      {/* Temporary Mobile Viewport Debug Pill (non-interactive, top-right) */}
+      <div className="sm:hidden absolute top-1 right-1.5 z-50 pointer-events-none bg-slate-900/75 text-emerald-300 font-mono text-[9px] leading-tight px-1.5 py-0.5 rounded shadow">
+        in:{viewport.innerHeight} vv:{viewport.vvHeight} top:{viewport.vvOffsetTop} sy:{viewport.scrollY} kb:{viewport.isKeyboardOpen ? 1 : 0}
+      </div>
+
+      {/* Header (auto-collapsed on mobile when keyboard is open to maximize editor lines) */}
+      <div className={viewport.isKeyboardOpen ? 'hidden sm:block' : 'block'}>
+        <Header
+          onSortDueDates={handleSortDueDates}
+          onManualSync={() => {
+            const targetPane = dirtyPane || focusedPane || activeMobilePane;
+            handleCommitChange(targetPane);
+          }}
+          onToggleHelp={() => setIsHelpOpen(true)}
+          onToggleHistory={() => setIsHistoryOpen(true)}
+          onToggleSettings={() => setIsSettingsOpen(true)}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          historyCount={historyState.snapshots.length}
+          syncStatus={syncStatus}
+          activeMobilePane={activeMobilePane}
+          onChangeMobilePane={setActiveMobilePane}
+          isSaved={dirtyPane === null}
+        />
+      </div>
 
       {/* Main Dual Memo Workspace */}
-      <main className="flex-1 w-full mx-auto p-1.5 sm:p-3 overflow-hidden">
+      <main
+        className={`flex-1 w-full mx-auto overflow-hidden ${
+          viewport.isKeyboardOpen ? 'p-0 sm:p-3' : 'p-1.5 sm:p-3'
+        }`}
+      >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 h-full">
           {/* Left Pane (Category axis: !inbox) */}
           <div
@@ -586,6 +598,7 @@ export const App: React.FC = () => {
               placeholder={`!inbox\n牛乳を買う #10/25 [生活]\n  スーパーの特売日\n\n!ワーク\n企画書作成 #10/22 [仕事]`}
               text={categoryText}
               isDirty={dirtyPane === 'category'}
+              isKeyboardOpen={viewport.isKeyboardOpen}
               onChangeText={(newText) => {
                 updateCategoryText(newText);
                 updateDirtyPane('category');
@@ -610,6 +623,7 @@ export const App: React.FC = () => {
               placeholder={`[生活]\n牛乳を買う #10/25\n  スーパーの特売日\n\n[仕事]\n企画書作成 #10/22 !ワーク`}
               text={themeText}
               isDirty={dirtyPane === 'theme'}
+              isKeyboardOpen={viewport.isKeyboardOpen}
               onChangeText={(newText) => {
                 updateThemeText(newText);
                 updateDirtyPane('theme');
@@ -625,6 +639,17 @@ export const App: React.FC = () => {
       {/* Quick Toolbar (Always visible on mobile bottom or desktop bottom helper) */}
       <QuickToolbar
         activePane={dirtyPane || focusedPane || activeMobilePane}
+        onTogglePane={() => {
+          const nextPane = activeMobilePane === 'category' ? 'theme' : 'category';
+          setActiveMobilePane(nextPane);
+          requestAnimationFrame(() => {
+            if (nextPane === 'theme') {
+              themePaneRef.current?.focus();
+            } else {
+              categoryPaneRef.current?.focus();
+            }
+          });
+        }}
         onInsertText={handleQuickInsertText}
         onInsertIndentComment={handleQuickInsertIndent}
         canUndo={canUndo}
@@ -638,6 +663,7 @@ export const App: React.FC = () => {
         onSortDueDates={handleSortDueDates}
         onToggleSectionNav={handleQuickToggleNav}
         isDirty={dirtyPane !== null}
+        isKeyboardOpen={viewport.isKeyboardOpen}
       />
 
       {/* Modals */}

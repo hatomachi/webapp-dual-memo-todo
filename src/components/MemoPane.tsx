@@ -31,6 +31,7 @@ interface MemoPaneProps {
   placeholder: string;
   text: string;
   isDirty: boolean;
+  isKeyboardOpen?: boolean;
   onChangeText: (newText: string) => void;
   onCommitChange: (paneType: PaneType) => void;
   onFocus: () => void;
@@ -60,6 +61,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       placeholder,
       text,
       isDirty,
+      isKeyboardOpen = false,
       onChangeText,
       onCommitChange,
       onFocus,
@@ -95,12 +97,12 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       const lineBottom = lineTop + lineEl.offsetHeight;
       const viewTop = container.scrollTop;
       const viewBottom = viewTop + container.clientHeight;
-      const padding = 28; // 1 line of breathing room
+      const padding = 36; // 1+ line of breathing room above bottom toolbar
 
       if (lineTop < viewTop + 12) {
         container.scrollTop = Math.max(0, lineTop - 12);
       } else if (lineBottom + padding > viewBottom) {
-        container.scrollTop = lineBottom + padding - container.clientHeight;
+        container.scrollTop = Math.max(0, lineBottom + padding - container.clientHeight);
       }
     }, []);
 
@@ -125,18 +127,43 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       normalizeTextareaInternalScroll();
     }, [text, normalizeTextareaInternalScroll]);
 
-    // Keep active caret visible when virtual keyboard opens or resizes
+    // Keep active caret visible after layout settles when virtual keyboard opens or resizes
     useEffect(() => {
       const vv = window.visualViewport;
       if (!vv) return;
 
+      let raf1 = 0;
+      let raf2 = 0;
+
       const handleViewportChange = () => {
-        ensureCaretVisible();
+        cancelAnimationFrame(raf1);
+        cancelAnimationFrame(raf2);
+        raf1 = requestAnimationFrame(() => {
+          normalizeTextareaInternalScroll();
+          ensureCaretVisible();
+          raf2 = requestAnimationFrame(() => {
+            ensureCaretVisible();
+          });
+        });
       };
 
       vv.addEventListener('resize', handleViewportChange);
-      return () => vv.removeEventListener('resize', handleViewportChange);
-    }, [ensureCaretVisible]);
+      vv.addEventListener('scroll', handleViewportChange);
+      return () => {
+        cancelAnimationFrame(raf1);
+        cancelAnimationFrame(raf2);
+        vv.removeEventListener('resize', handleViewportChange);
+        vv.removeEventListener('scroll', handleViewportChange);
+      };
+    }, [ensureCaretVisible, normalizeTextareaInternalScroll]);
+
+    // Re-check caret visibility when header collapses/expands on keyboard state change
+    useEffect(() => {
+      const raf = requestAnimationFrame(() => {
+        ensureCaretVisible();
+      });
+      return () => cancelAnimationFrame(raf);
+    }, [isKeyboardOpen, ensureCaretVisible]);
 
     // Expose manipulation methods to parent (for QuickToolbar)
     useImperativeHandle(ref, () => ({
@@ -303,6 +330,11 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
             scrollContainerRef.current.scrollTop = savedTop;
           }
           pointerDownScrollTopRef.current = null;
+          ensureCaretVisible();
+        });
+      } else {
+        requestAnimationFrame(() => {
+          ensureCaretVisible();
         });
       }
       onFocus();
@@ -311,9 +343,19 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
     const lines = text.split('\n');
 
     return (
-      <div className="flex flex-col h-full bg-white rounded-lg shadow-sm border border-slate-300 overflow-hidden relative">
-        {/* Simple Notepad Header Bar */}
-        <div className="flex items-center justify-between px-3 py-1.5 sm:py-2 bg-slate-100 border-b border-slate-200 select-none">
+      <div
+        className={`flex flex-col h-full bg-white shadow-sm overflow-hidden relative ${
+          isKeyboardOpen
+            ? 'rounded-none border-0 sm:rounded-lg sm:border sm:border-slate-300'
+            : 'rounded-lg border border-slate-300'
+        }`}
+      >
+        {/* Simple Notepad Header Bar (auto-collapsed on mobile when keyboard is open) */}
+        <div
+          className={`${
+            isKeyboardOpen ? 'hidden sm:flex' : 'flex'
+          } items-center justify-between px-3 py-1.5 sm:py-2 bg-slate-100 border-b border-slate-200 select-none`}
+        >
           <div className="flex items-center gap-2 min-w-0">
             <span
               className={`w-2 h-2 rounded-full flex-shrink-0 ${
@@ -458,6 +500,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                 }}
                 onScroll={normalizeTextareaInternalScroll}
                 onPointerDown={handlePointerDown}
+                onClick={() => requestAnimationFrame(() => ensureCaretVisible())}
                 onFocus={handleFocus}
                 onBlur={onBlur}
                 onKeyDown={handleKeyDown}

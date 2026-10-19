@@ -14,6 +14,7 @@ import { PaneType } from '../types/todo';
 
 interface QuickToolbarProps {
   activePane: PaneType;
+  onTogglePane?: () => void;
   onInsertText: (before: string, after?: string) => void;
   onInsertIndentComment: () => void;
   canUndo: boolean;
@@ -24,6 +25,7 @@ interface QuickToolbarProps {
   onSortDueDates: () => void;
   onToggleSectionNav: () => void;
   isDirty: boolean;
+  isKeyboardOpen?: boolean;
 }
 
 interface ToolbarButtonProps {
@@ -102,6 +104,7 @@ const ToolbarButton: React.FC<ToolbarButtonProps> = ({
 
 export const QuickToolbar: React.FC<QuickToolbarProps> = ({
   activePane,
+  onTogglePane,
   onInsertText,
   onInsertIndentComment,
   canUndo,
@@ -112,24 +115,30 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
   onSortDueDates,
   onToggleSectionNav,
   isDirty,
+  isKeyboardOpen = false,
 }) => {
   return (
     <div
       className="bg-slate-800 text-slate-200 border-t border-slate-700 px-2 pt-1.5 flex items-center justify-between gap-1 select-none shadow-lg z-20 flex-shrink-0"
-      style={{ paddingBottom: 'max(0.375rem, env(safe-area-inset-bottom))' }}
+      style={{
+        paddingBottom: isKeyboardOpen
+          ? '0.375rem'
+          : 'max(0.375rem, env(safe-area-inset-bottom))',
+      }}
     >
       {/* Quick Insert Symbols & Active Pane Pill */}
       <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
-        <span
-          className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono tracking-tight flex-shrink-0 ${
+        <ToolbarButton
+          onTrigger={() => onTogglePane?.()}
+          className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono tracking-tight flex-shrink-0 cursor-pointer ${
             activePane === 'category'
               ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
               : 'bg-blue-950 text-blue-400 border border-blue-800'
           }`}
-          title="現在操作中のペイン"
+          title="現在操作中のペイン（タップで切替）"
         >
           {activePane === 'category' ? '!分類' : '[テーマ]'}
-        </span>
+        </ToolbarButton>
 
         {/* Indent comment button */}
         <ToolbarButton
