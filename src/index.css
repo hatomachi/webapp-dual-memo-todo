@@ -19,13 +19,6 @@
   -webkit-overflow-scrolling: touch;
 }
 
-.notepad-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-height: 100%;
-  position: relative;
-}
-
 .notepad-layer {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 12px;
@@ -40,6 +33,8 @@
   overflow-wrap: break-word;
   word-break: break-word;
   box-sizing: border-box;
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
 }
 
 .notepad-line {

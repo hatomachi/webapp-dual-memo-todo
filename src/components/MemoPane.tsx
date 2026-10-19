@@ -79,12 +79,86 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
     }, [text, type]);
 
     // Keep backdrop scroll in exact 1:1 sync with native textarea scroll
+    // Also mirrors any rubber-band stretch via translateY so decorations never detach
     const syncBackdropScroll = useCallback(() => {
       const textarea = textareaRef.current;
       const backdrop = backdropRef.current;
       if (!textarea || !backdrop) return;
-      backdrop.scrollTop = textarea.scrollTop;
+
+      const st = textarea.scrollTop;
+      const maxScroll = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
+
+      if (st < 0) {
+        // Top rubber-band bounce
+        backdrop.scrollTop = 0;
+        backdrop.style.transform = `translateY(${-st}px)`;
+      } else if (st > maxScroll) {
+        // Bottom rubber-band bounce
+        backdrop.scrollTop = maxScroll;
+        backdrop.style.transform = `translateY(${-(st - maxScroll)}px)`;
+      } else {
+        // Normal in-bounds scroll
+        backdrop.scrollTop = st;
+        if (backdrop.style.transform) {
+          backdrop.style.transform = '';
+        }
+      }
       backdrop.scrollLeft = textarea.scrollLeft;
+    }, []);
+
+    // Prevent rubber-banding / bounce at scroll boundaries (both wheel and touch)
+    useEffect(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      let touchStartY = 0;
+
+      const handleWheel = (e: WheelEvent) => {
+        const scrollTop = textarea.scrollTop;
+        const maxScroll = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
+
+        // At top and scrolling up
+        if (scrollTop <= 0 && e.deltaY < 0) {
+          if (e.cancelable) e.preventDefault();
+        }
+        // At bottom and scrolling down
+        else if (scrollTop >= maxScroll - 0.5 && e.deltaY > 0) {
+          if (e.cancelable) e.preventDefault();
+        }
+      };
+
+      const handleTouchStart = (e: TouchEvent) => {
+        if (e.touches.length === 1) {
+          touchStartY = e.touches[0].clientY;
+        }
+      };
+
+      const handleTouchMove = (e: TouchEvent) => {
+        if (e.touches.length !== 1) return;
+        const currentY = e.touches[0].clientY;
+        const deltaY = currentY - touchStartY; // positive = swipe down (trying to pull top down)
+        const scrollTop = textarea.scrollTop;
+        const maxScroll = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
+
+        // At top and pulling down
+        if (scrollTop <= 0 && deltaY > 0) {
+          if (e.cancelable) e.preventDefault();
+        }
+        // At bottom and pulling up
+        else if (scrollTop >= maxScroll - 0.5 && deltaY < 0) {
+          if (e.cancelable) e.preventDefault();
+        }
+      };
+
+      textarea.addEventListener('wheel', handleWheel, { passive: false });
+      textarea.addEventListener('touchstart', handleTouchStart, { passive: true });
+      textarea.addEventListener('touchmove', handleTouchMove, { passive: false });
+
+      return () => {
+        textarea.removeEventListener('wheel', handleWheel);
+        textarea.removeEventListener('touchstart', handleTouchStart);
+        textarea.removeEventListener('touchmove', handleTouchMove);
+      };
     }, []);
 
     // Track textarea clientWidth vs offsetWidth to eliminate word-wrap drift on non-overlay scrollbars
