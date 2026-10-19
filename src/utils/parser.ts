@@ -319,9 +319,13 @@ export const organizeSections = (sections: string[], defaultSection: string): st
 /**
  * Format TaskItems to Category Text (Left Pane format)
  * Default (!inbox) is placed at the bottom.
+ * Preserves customCategories ordering and outputs empty sections if explicitly defined.
  */
-export const formatTasksToCategoryText = (tasks: TaskItem[]): string => {
-  const categoryList: string[] = [];
+export const formatTasksToCategoryText = (
+  tasks: TaskItem[],
+  customCategories?: string[]
+): string => {
+  const categoryList: string[] = [...(customCategories || [])];
   tasks.forEach((t) => {
     if (t.category) categoryList.push(t.category);
   });
@@ -331,8 +335,9 @@ export const formatTasksToCategoryText = (tasks: TaskItem[]): string => {
 
   for (const cat of orderedCategories) {
     const catTasks = tasks.filter((t) => (t.category || 'inbox').toLowerCase() === cat.toLowerCase());
-    // Only output if there are tasks, or if it is the inbox default
-    if (catTasks.length === 0 && cat.toLowerCase() !== 'inbox') {
+    const isExplicit = customCategories && customCategories.some((c) => c.toLowerCase() === cat.toLowerCase());
+    // Output if there are tasks, or if explicitly declared in customCategories, or if default 'inbox'
+    if (catTasks.length === 0 && !isExplicit && cat.toLowerCase() !== 'inbox') {
       continue;
     }
 
@@ -362,9 +367,13 @@ export const formatTasksToCategoryText = (tasks: TaskItem[]): string => {
 /**
  * Format TaskItems to Theme Text (Right Pane format)
  * Default ([Uncategorized]) is placed at the bottom.
+ * Preserves customThemes ordering and outputs empty sections if explicitly defined.
  */
-export const formatTasksToThemeText = (tasks: TaskItem[]): string => {
-  const themeList: string[] = [];
+export const formatTasksToThemeText = (
+  tasks: TaskItem[],
+  customThemes?: string[]
+): string => {
+  const themeList: string[] = [...(customThemes || [])];
   tasks.forEach((t) => {
     if (t.theme) themeList.push(t.theme);
   });
@@ -374,7 +383,9 @@ export const formatTasksToThemeText = (tasks: TaskItem[]): string => {
 
   for (const theme of orderedThemes) {
     const themeTasks = tasks.filter((t) => (t.theme || 'Uncategorized').toLowerCase() === theme.toLowerCase());
-    if (themeTasks.length === 0 && theme.toLowerCase() !== 'uncategorized') {
+    const isExplicit = customThemes && customThemes.some((th) => th.toLowerCase() === theme.toLowerCase());
+    // Output if there are tasks, or if explicitly declared in customThemes, or if default 'Uncategorized'
+    if (themeTasks.length === 0 && !isExplicit && theme.toLowerCase() !== 'uncategorized') {
       continue;
     }
 
@@ -399,6 +410,22 @@ export const formatTasksToThemeText = (tasks: TaskItem[]): string => {
   }
 
   return sections.join('\n\n');
+};
+
+/**
+ * Extract distinct category section headers from text in appearance order.
+ */
+export const extractCategorySections = (text: string): string[] => {
+  const sections = extractSectionsFromText(text, 'category');
+  return organizeSections(sections.map((s) => s.raw), 'inbox');
+};
+
+/**
+ * Extract distinct theme section headers from text in appearance order.
+ */
+export const extractThemeSections = (text: string): string[] => {
+  const sections = extractSectionsFromText(text, 'theme');
+  return organizeSections(sections.map((s) => s.raw), 'Uncategorized');
 };
 
 /**

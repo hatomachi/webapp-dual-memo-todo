@@ -11,8 +11,10 @@ export interface RemotePayload {
   version: number;
   updatedAt: string;
   tasks: any[];
-  categoryText: string;
-  themeText: string;
+  categories?: string[];
+  themes?: string[];
+  categoryText?: string;
+  themeText?: string;
 }
 
 export type SyncStatus = 'idle' | 'syncing' | 'success' | 'error';

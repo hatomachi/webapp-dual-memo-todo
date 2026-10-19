@@ -6,6 +6,8 @@ import {
   formatTasksToCategoryText,
   formatTasksToThemeText,
   sortTasksByDueDate,
+  extractCategorySections,
+  extractThemeSections,
 } from './utils/parser';
 import { INITIAL_CATEGORY_TEXT } from './data/sampleData';
 import { Header } from './components/Header';
@@ -35,11 +37,15 @@ import { checkForServiceWorkerUpdate } from './utils/pwaUpdate';
 const STORAGE_KEY_TASKS = 'dual_memo_tasks_v3';
 const STORAGE_KEY_CAT_TEXT = 'dual_memo_category_text_v3';
 const STORAGE_KEY_THM_TEXT = 'dual_memo_theme_text_v3';
+const STORAGE_KEY_CATEGORIES = 'dual_memo_categories_v3';
+const STORAGE_KEY_THEMES = 'dual_memo_themes_v3';
 
 export const App: React.FC = () => {
   const [, setTasks] = useState<TaskItem[]>([]);
   const [categoryText, setCategoryText] = useState<string>('');
   const [themeText, setThemeText] = useState<string>('');
+  const [, setCategories] = useState<string[]>([]);
+  const [, setThemes] = useState<string[]>([]);
   const [activeMobilePane, setActiveMobilePane] = useState<PaneType>('category');
   const [focusedPane, setFocusedPane] = useState<PaneType | null>(null);
   const [dirtyPane, setDirtyPane] = useState<PaneType | null>(null);
@@ -71,6 +77,8 @@ export const App: React.FC = () => {
   // Refs to always hold the exact latest text without closure staleness
   const categoryTextRef = useRef<string>('');
   const themeTextRef = useRef<string>('');
+  const categoriesRef = useRef<string[]>([]);
+  const themesRef = useRef<string[]>([]);
   const tasksRef = useRef<TaskItem[]>([]);
 
   // MemoPane handles for QuickToolbar actions
@@ -87,6 +95,16 @@ export const App: React.FC = () => {
     setThemeText(val);
   };
 
+  const updateCategories = (val: string[]) => {
+    categoriesRef.current = val;
+    setCategories(val);
+  };
+
+  const updateThemes = (val: string[]) => {
+    themesRef.current = val;
+    setThemes(val);
+  };
+
   const updateTasks = (val: TaskItem[]) => {
     tasksRef.current = val;
     setTasks(val);
@@ -101,11 +119,23 @@ export const App: React.FC = () => {
 
   // Save to localStorage
   const saveToStorage = useCallback(
-    (newTasks: TaskItem[], newCatText: string, newThmText: string) => {
+    (
+      newTasks: TaskItem[],
+      newCatText: string,
+      newThmText: string,
+      newCats?: string[],
+      newThms?: string[]
+    ) => {
       try {
         localStorage.setItem(STORAGE_KEY_TASKS, JSON.stringify(newTasks));
         localStorage.setItem(STORAGE_KEY_CAT_TEXT, newCatText);
         localStorage.setItem(STORAGE_KEY_THM_TEXT, newThmText);
+        if (newCats) {
+          localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(newCats));
+        }
+        if (newThms) {
+          localStorage.setItem(STORAGE_KEY_THEMES, JSON.stringify(newThms));
+        }
       } catch (err) {
         console.error('Failed to save to localStorage', err);
       }
@@ -130,12 +160,30 @@ export const App: React.FC = () => {
       }
       try {
         const { payload } = await fetchFromGitHub(settings);
-        if (!payload || !payload.categoryText) return;
+        if (!payload || (!payload.tasks && !payload.categoryText)) return;
+
+        const loadedTasks: TaskItem[] =
+          Array.isArray(payload.tasks) && payload.tasks.length > 0
+            ? payload.tasks
+            : parseCategoryText(payload.categoryText || '');
+
+        const loadedCats: string[] =
+          Array.isArray(payload.categories) && payload.categories.length > 0
+            ? payload.categories
+            : extractCategorySections(payload.categoryText || '');
+
+        const loadedThms: string[] =
+          Array.isArray(payload.themes) && payload.themes.length > 0
+            ? payload.themes
+            : extractThemeSections(payload.themeText || '');
+
+        const newCat = formatTasksToCategoryText(loadedTasks, loadedCats);
+        const newThm = formatTasksToThemeText(loadedTasks, loadedThms);
 
         // If current text is already identical to remote, just mark success
         if (
-          categoryTextRef.current === payload.categoryText &&
-          themeTextRef.current === payload.themeText
+          categoryTextRef.current === newCat &&
+          themeTextRef.current === newThm
         ) {
           setSyncStatus('success');
           const now = Date.now();
@@ -146,17 +194,12 @@ export const App: React.FC = () => {
 
         // Only apply if user is still not dirty
         if (dirtyPaneRef.current === null) {
-          const newCat = payload.categoryText;
-          const newThm = payload.themeText || '';
-          const newT =
-            Array.isArray(payload.tasks) && payload.tasks.length > 0
-              ? payload.tasks
-              : parseCategoryText(newCat);
-
-          updateTasks(newT);
+          updateTasks(loadedTasks);
+          updateCategories(loadedCats);
+          updateThemes(loadedThms);
           updateCategoryText(newCat);
           updateThemeText(newThm);
-          saveToStorage(newT, newCat, newThm);
+          saveToStorage(loadedTasks, newCat, newThm, loadedCats, loadedThms);
           setSyncStatus('success');
           const now = Date.now();
           setLastSyncedAt(now);
@@ -178,7 +221,12 @@ export const App: React.FC = () => {
 
   // Background GitHub push helper
   const triggerBackgroundGitHubPush = useCallback(
-    async (tasks: TaskItem[], catText: string, thmText: string, label: string) => {
+    async (
+      tasks: TaskItem[],
+      cats: string[],
+      thms: string[],
+      label: string
+    ) => {
       const settings = loadGitHubSettings();
       if (!settings || !settings.token || !settings.owner || !settings.repo) {
         return;
@@ -191,11 +239,11 @@ export const App: React.FC = () => {
       setSyncErrorMessage(undefined);
       try {
         const payload: RemotePayload = {
-          version: 1,
+          version: 2,
           updatedAt: new Date().toISOString(),
+          categories: cats,
+          themes: thms,
           tasks,
-          categoryText: catText,
-          themeText: thmText,
         };
         await pushToGitHub(settings, payload, `chore: update memo (${label})`);
         setSyncStatus('success');
@@ -223,11 +271,22 @@ export const App: React.FC = () => {
     let initialCat = '';
     let initialThm = '';
     let initialT: TaskItem[] = [];
+    let initialCats: string[] = [];
+    let initialThms: string[] = [];
 
     try {
       const savedTasksJson = localStorage.getItem(STORAGE_KEY_TASKS);
       const savedCatText = localStorage.getItem(STORAGE_KEY_CAT_TEXT);
       const savedThmText = localStorage.getItem(STORAGE_KEY_THM_TEXT);
+      const savedCatsJson = localStorage.getItem(STORAGE_KEY_CATEGORIES);
+      const savedThmsJson = localStorage.getItem(STORAGE_KEY_THEMES);
+
+      if (savedCatsJson) {
+        initialCats = JSON.parse(savedCatsJson);
+      }
+      if (savedThmsJson) {
+        initialThms = JSON.parse(savedThmsJson);
+      }
 
       if (savedTasksJson && savedCatText !== null && savedThmText !== null) {
         initialT = JSON.parse(savedTasksJson);
@@ -240,11 +299,22 @@ export const App: React.FC = () => {
 
     if (!initialCat) {
       initialT = parseCategoryText(INITIAL_CATEGORY_TEXT);
-      initialThm = formatTasksToThemeText(initialT);
+      initialCats = extractCategorySections(INITIAL_CATEGORY_TEXT);
+      initialThms = ['Uncategorized'];
       initialCat = INITIAL_CATEGORY_TEXT;
+      initialThm = formatTasksToThemeText(initialT, initialThms);
+    } else {
+      if (initialCats.length === 0) {
+        initialCats = extractCategorySections(initialCat);
+      }
+      if (initialThms.length === 0) {
+        initialThms = extractThemeSections(initialThm);
+      }
     }
 
     updateTasks(initialT);
+    updateCategories(initialCats);
+    updateThemes(initialThms);
     updateCategoryText(initialCat);
     updateThemeText(initialThm);
 
@@ -289,24 +359,30 @@ export const App: React.FC = () => {
       let newTasks: TaskItem[] = [];
       let newCat = '';
       let newThm = '';
+      let newCats = categoriesRef.current;
+      let newThms = themesRef.current;
 
       if (sourcePane === 'category') {
         label = '左 ➔ 右 反映';
         newCat = categoryTextRef.current;
+        newCats = extractCategorySections(newCat);
         newTasks = parseCategoryText(newCat, tasksRef.current);
-        newThm = formatTasksToThemeText(newTasks);
+        newThm = formatTasksToThemeText(newTasks, newThms);
+        updateCategories(newCats);
         updateTasks(newTasks);
         updateThemeText(newThm);
-        saveToStorage(newTasks, newCat, newThm);
+        saveToStorage(newTasks, newCat, newThm, newCats, newThms);
         showToast('💾 左 ➔ 右へ反映しました');
       } else {
         label = '右 ➔ 左 反映';
         newThm = themeTextRef.current;
+        newThms = extractThemeSections(newThm);
         newTasks = parseThemeText(newThm, tasksRef.current);
-        newCat = formatTasksToCategoryText(newTasks);
+        newCat = formatTasksToCategoryText(newTasks, newCats);
+        updateThemes(newThms);
         updateTasks(newTasks);
         updateCategoryText(newCat);
-        saveToStorage(newTasks, newCat, newThm);
+        saveToStorage(newTasks, newCat, newThm, newCats, newThms);
         showToast('💾 右 ➔ 左へ反映しました');
       }
 
@@ -316,7 +392,7 @@ export const App: React.FC = () => {
       setHistoryState((prev) => addSnapshot(prev, label, newCat, newThm));
 
       // Trigger background GitHub push if configured
-      triggerBackgroundGitHubPush(newTasks, newCat, newThm, label);
+      triggerBackgroundGitHubPush(newTasks, newCats, newThms, label);
     },
     [saveToStorage, triggerBackgroundGitHubPush]
   );
@@ -324,21 +400,27 @@ export const App: React.FC = () => {
   // Sort by due date within each section
   const handleSortDueDates = useCallback(() => {
     let currentTasks = tasksRef.current;
+    let currentCats = categoriesRef.current;
+    let currentThms = themesRef.current;
     const activeSource = dirtyPane || focusedPane || activeMobilePane || 'category';
     if (dirtyPane === 'category') {
+      currentCats = extractCategorySections(categoryTextRef.current);
       currentTasks = parseCategoryText(categoryTextRef.current, currentTasks);
+      updateCategories(currentCats);
     } else if (dirtyPane === 'theme') {
+      currentThms = extractThemeSections(themeTextRef.current);
       currentTasks = parseThemeText(themeTextRef.current, currentTasks);
+      updateThemes(currentThms);
     }
 
     const sorted = sortTasksByDueDate(currentTasks, activeSource);
-    const newCatText = formatTasksToCategoryText(sorted);
-    const newThmText = formatTasksToThemeText(sorted);
+    const newCatText = formatTasksToCategoryText(sorted, currentCats);
+    const newThmText = formatTasksToThemeText(sorted, currentThms);
 
     updateTasks(sorted);
     updateCategoryText(newCatText);
     updateThemeText(newThmText);
-    saveToStorage(sorted, newCatText, newThmText);
+    saveToStorage(sorted, newCatText, newThmText, currentCats, currentThms);
     updateDirtyPane(null);
 
     const label = '期日ソート';
@@ -348,7 +430,7 @@ export const App: React.FC = () => {
     setHistoryState((prev) => addSnapshot(prev, label, newCatText, newThmText));
 
     // Background push
-    triggerBackgroundGitHubPush(sorted, newCatText, newThmText, label);
+    triggerBackgroundGitHubPush(sorted, currentCats, currentThms, label);
   }, [dirtyPane, focusedPane, activeMobilePane, saveToStorage, triggerBackgroundGitHubPush]);
 
   // Undo (restore previous snapshot in stack)
@@ -362,10 +444,14 @@ export const App: React.FC = () => {
     if (!targetSnap) return;
 
     const parsedTasks = parseCategoryText(targetSnap.categoryText);
+    const parsedCats = extractCategorySections(targetSnap.categoryText);
+    const parsedThms = extractThemeSections(targetSnap.themeText);
     updateTasks(parsedTasks);
+    updateCategories(parsedCats);
+    updateThemes(parsedThms);
     updateCategoryText(targetSnap.categoryText);
     updateThemeText(targetSnap.themeText);
-    saveToStorage(parsedTasks, targetSnap.categoryText, targetSnap.themeText);
+    saveToStorage(parsedTasks, targetSnap.categoryText, targetSnap.themeText, parsedCats, parsedThms);
     updateDirtyPane(null);
 
     const newState: HistoryState = {
@@ -386,10 +472,14 @@ export const App: React.FC = () => {
     if (!targetSnap) return;
 
     const parsedTasks = parseCategoryText(targetSnap.categoryText);
+    const parsedCats = extractCategorySections(targetSnap.categoryText);
+    const parsedThms = extractThemeSections(targetSnap.themeText);
     updateTasks(parsedTasks);
+    updateCategories(parsedCats);
+    updateThemes(parsedThms);
     updateCategoryText(targetSnap.categoryText);
     updateThemeText(targetSnap.themeText);
-    saveToStorage(parsedTasks, targetSnap.categoryText, targetSnap.themeText);
+    saveToStorage(parsedTasks, targetSnap.categoryText, targetSnap.themeText, parsedCats, parsedThms);
     updateDirtyPane(null);
 
     const newState: HistoryState = {
@@ -409,10 +499,14 @@ export const App: React.FC = () => {
       if (!snap) return;
 
       const parsedTasks = parseCategoryText(snap.categoryText);
+      const parsedCats = extractCategorySections(snap.categoryText);
+      const parsedThms = extractThemeSections(snap.themeText);
       updateTasks(parsedTasks);
+      updateCategories(parsedCats);
+      updateThemes(parsedThms);
       updateCategoryText(snap.categoryText);
       updateThemeText(snap.themeText);
-      saveToStorage(parsedTasks, snap.categoryText, snap.themeText);
+      saveToStorage(parsedTasks, snap.categoryText, snap.themeText, parsedCats, parsedThms);
       updateDirtyPane(null);
 
       const newState: HistoryState = {
@@ -438,17 +532,30 @@ export const App: React.FC = () => {
     setSyncErrorMessage(undefined);
     try {
       const { payload } = await fetchFromGitHub(settings);
-      const newCat = payload.categoryText || '';
-      const newThm = payload.themeText || '';
-      const newT: TaskItem[] =
+      const loadedTasks: TaskItem[] =
         Array.isArray(payload.tasks) && payload.tasks.length > 0
           ? payload.tasks
-          : parseCategoryText(newCat);
+          : parseCategoryText(payload.categoryText || '');
 
-      updateTasks(newT);
+      const loadedCats: string[] =
+        Array.isArray(payload.categories) && payload.categories.length > 0
+          ? payload.categories
+          : extractCategorySections(payload.categoryText || '');
+
+      const loadedThms: string[] =
+        Array.isArray(payload.themes) && payload.themes.length > 0
+          ? payload.themes
+          : extractThemeSections(payload.themeText || '');
+
+      const newCat = formatTasksToCategoryText(loadedTasks, loadedCats);
+      const newThm = formatTasksToThemeText(loadedTasks, loadedThms);
+
+      updateTasks(loadedTasks);
+      updateCategories(loadedCats);
+      updateThemes(loadedThms);
       updateCategoryText(newCat);
       updateThemeText(newThm);
-      saveToStorage(newT, newCat, newThm);
+      saveToStorage(loadedTasks, newCat, newThm, loadedCats, loadedThms);
       updateDirtyPane(null);
 
       setSyncStatus('success');
@@ -476,16 +583,16 @@ export const App: React.FC = () => {
     setSyncStatus('syncing');
     setSyncErrorMessage(undefined);
     try {
-      const currentCat = categoryTextRef.current;
-      const currentThm = themeTextRef.current;
+      const currentCats = categoriesRef.current;
+      const currentThms = themesRef.current;
       const currentT = tasksRef.current;
 
       const payload: RemotePayload = {
-        version: 1,
+        version: 2,
         updatedAt: new Date().toISOString(),
+        categories: currentCats,
+        themes: currentThms,
         tasks: currentT,
-        categoryText: currentCat,
-        themeText: currentThm,
       };
 
       await pushToGitHub(settings, payload, 'chore: manual push from Dual Memo PWA');
