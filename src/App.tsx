@@ -14,6 +14,7 @@ import { HelpModal } from './components/HelpModal';
 import { HistoryModal } from './components/HistoryModal';
 import { SettingsModal } from './components/SettingsModal';
 import { QuickToolbar } from './components/QuickToolbar';
+import { useVisualViewport } from './hooks/useVisualViewport';
 import { HistoryState } from './types/history';
 import {
   loadHistoryState,
@@ -538,8 +539,15 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', onGlobalKeyDown);
   }, [dirtyPane, focusedPane, activeMobilePane, handleCommitChange]);
 
+  const viewportHeight = useVisualViewport();
+
   return (
-    <div className="flex flex-col h-[100dvh] bg-slate-100 overflow-hidden font-sans select-none sm:select-auto">
+    <div
+      className="fixed inset-x-0 top-0 flex flex-col bg-slate-100 overflow-hidden font-sans select-none sm:select-auto"
+      style={{
+        height: viewportHeight ? `${viewportHeight}px` : '100dvh',
+      }}
+    >
       {/* Header */}
       <Header
         onSortDueDates={handleSortDueDates}

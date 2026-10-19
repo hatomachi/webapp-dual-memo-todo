@@ -1,5 +1,6 @@
 import React, {
   useRef,
+  useEffect,
   useLayoutEffect,
   useState,
   useMemo,
@@ -123,6 +124,19 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
     useLayoutEffect(() => {
       normalizeTextareaInternalScroll();
     }, [text, normalizeTextareaInternalScroll]);
+
+    // Keep active caret visible when virtual keyboard opens or resizes
+    useEffect(() => {
+      const vv = window.visualViewport;
+      if (!vv) return;
+
+      const handleViewportChange = () => {
+        ensureCaretVisible();
+      };
+
+      vv.addEventListener('resize', handleViewportChange);
+      return () => vv.removeEventListener('resize', handleViewportChange);
+    }, [ensureCaretVisible]);
 
     // Expose manipulation methods to parent (for QuickToolbar)
     useImperativeHandle(ref, () => ({
