@@ -12,9 +12,9 @@ import { Header } from './components/Header';
 import { MemoPane } from './components/MemoPane';
 import { HelpModal } from './components/HelpModal';
 
-const STORAGE_KEY_TASKS = 'dual_memo_tasks_v2';
-const STORAGE_KEY_CAT_TEXT = 'dual_memo_category_text_v2';
-const STORAGE_KEY_THM_TEXT = 'dual_memo_theme_text_v2';
+const STORAGE_KEY_TASKS = 'dual_memo_tasks_v3';
+const STORAGE_KEY_CAT_TEXT = 'dual_memo_category_text_v3';
+const STORAGE_KEY_THM_TEXT = 'dual_memo_theme_text_v3';
 
 export const App: React.FC = () => {
   const [, setTasks] = useState<TaskItem[]>([]);

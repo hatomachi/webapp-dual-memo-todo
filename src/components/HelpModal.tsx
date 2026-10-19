@@ -60,6 +60,13 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
             </div>
 
             <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+              <span className="font-bold text-indigo-700">階層区切り（コロン区切り）＆目次ジャンプ</span>
+              <p className="font-sans text-slate-600 mt-1">
+                <code className="bg-slate-200 px-1 py-0.5 rounded font-mono">[APIGW]</code> と <code className="bg-slate-200 px-1 py-0.5 rounded font-mono">[APIGW:xx対応]</code> のようにコロン <code className="bg-slate-200 px-1 py-0.5 rounded font-mono">:</code> で区切ると、左側の「区切りリスト」でツリー階層として表示されます。反映・保存時も親の直下に子が揃って並びます。目次をクリックすると該当行へジャンプできます。
+              </p>
+            </div>
+
+            <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
               <span className="font-bold text-slate-800 flex items-center gap-1">
                 <CornerDownRight className="w-3.5 h-3.5 text-slate-500" />
                 字下げコメント（親子関係）

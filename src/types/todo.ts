@@ -21,3 +21,12 @@ export interface FormattedLine {
   dueDateTag?: string;
   indentCount?: number;
 }
+
+export interface SectionItem {
+  raw: string;          // 完全なセクション名 (e.g. "APIGW:xx対応")
+  displayName: string;  // 階層末尾の表示名 (e.g. "xx対応")
+  depth: number;        // 階層深度 (0 = ルート, 1 = 子, 2 = 孫...)
+  lineIndex: number;    // テキスト内の行番号 (0-indexed)
+  charIndex: number;    // テキスト内の先頭文字オフセット
+  isDefault: boolean;   // inbox または Uncategorized かどうか
+}

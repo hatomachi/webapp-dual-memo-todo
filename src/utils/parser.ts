@@ -1,4 +1,4 @@
-import { TaskItem, PaneType } from '../types/todo';
+import { TaskItem, PaneType, SectionItem } from '../types/todo';
 
 /**
  * Generate a short random ID
@@ -244,19 +244,95 @@ export const parseThemeText = (
 };
 
 /**
+ * Organize section names hierarchically.
+ * - Root sections appear in their first-encountered order.
+ * - Child sections (delimited by ':') appear immediately under their parent.
+ * - Children under the same parent maintain their relative order.
+ * - The defaultSection ('inbox' or 'Uncategorized') is placed at the very bottom.
+ */
+export const organizeSections = (sections: string[], defaultSection: string): string[] => {
+  const defaultLower = defaultSection.toLowerCase();
+
+  // Deduplicate preserving case of first occurrence
+  const seen = new Set<string>();
+  const uniqueList: string[] = [];
+  for (const s of sections) {
+    const trimmed = s.trim();
+    if (!trimmed) continue;
+    const lower = trimmed.toLowerCase();
+    if (!seen.has(lower)) {
+      seen.add(lower);
+      uniqueList.push(trimmed);
+    }
+  }
+
+  // Filter out defaultSection so it can be appended at the end
+  const nonDefaults = uniqueList.filter((s) => s.toLowerCase() !== defaultLower);
+
+  // Map root section names to their first encountered index
+  const rootOrder = new Map<string, number>();
+  let rootIndex = 0;
+  for (const s of nonDefaults) {
+    const root = s.split(':')[0].trim().toLowerCase();
+    if (!rootOrder.has(root)) {
+      rootOrder.set(root, rootIndex++);
+    }
+  }
+
+  // Preserve relative appearance order
+  const origIndexMap = new Map<string, number>();
+  nonDefaults.forEach((s, idx) => origIndexMap.set(s, idx));
+
+  nonDefaults.sort((a, b) => {
+    const partsA = a.split(':').map((p) => p.trim());
+    const partsB = b.split(':').map((p) => p.trim());
+    const rootA = partsA[0].toLowerCase();
+    const rootB = partsB[0].toLowerCase();
+
+    // 1. Group by root order
+    const orderA = rootOrder.get(rootA) ?? 9999;
+    const orderB = rootOrder.get(rootB) ?? 9999;
+    if (orderA !== orderB) {
+      return orderA - orderB;
+    }
+
+    // 2. Both belong to same root
+    const minLen = Math.min(partsA.length, partsB.length);
+    for (let i = 0; i < minLen; i++) {
+      if (partsA[i].toLowerCase() !== partsB[i].toLowerCase()) {
+        return (origIndexMap.get(a) ?? 0) - (origIndexMap.get(b) ?? 0);
+      }
+    }
+
+    // Shorter path (parent) comes first before longer path (child)
+    if (partsA.length !== partsB.length) {
+      return partsA.length - partsB.length;
+    }
+
+    return (origIndexMap.get(a) ?? 0) - (origIndexMap.get(b) ?? 0);
+  });
+
+  // Always put the defaultSection at the very bottom
+  return [...nonDefaults, defaultSection];
+};
+
+/**
  * Format TaskItems to Category Text (Left Pane format)
+ * Default (!inbox) is placed at the bottom.
  */
 export const formatTasksToCategoryText = (tasks: TaskItem[]): string => {
-  const categorySet = new Set<string>();
-  categorySet.add('inbox');
-  tasks.forEach((t) => categorySet.add(t.category || 'inbox'));
-  const categories = Array.from(categorySet);
+  const categoryList: string[] = [];
+  tasks.forEach((t) => {
+    if (t.category) categoryList.push(t.category);
+  });
 
+  const orderedCategories = organizeSections(categoryList, 'inbox');
   const sections: string[] = [];
 
-  for (const cat of categories) {
-    const catTasks = tasks.filter((t) => (t.category || 'inbox') === cat);
-    if (catTasks.length === 0 && cat !== 'inbox') {
+  for (const cat of orderedCategories) {
+    const catTasks = tasks.filter((t) => (t.category || 'inbox').toLowerCase() === cat.toLowerCase());
+    // Only output if there are tasks, or if it is the inbox default
+    if (catTasks.length === 0 && cat.toLowerCase() !== 'inbox') {
       continue;
     }
 
@@ -267,7 +343,7 @@ export const formatTasksToCategoryText = (tasks: TaskItem[]): string => {
       if (task.dueDate) {
         taskLine += ` #${task.dueDate}`;
       }
-      if (task.theme && task.theme !== 'Uncategorized') {
+      if (task.theme && task.theme.toLowerCase() !== 'uncategorized') {
         taskLine += ` [${task.theme}]`;
       }
       lines.push(taskLine);
@@ -285,20 +361,20 @@ export const formatTasksToCategoryText = (tasks: TaskItem[]): string => {
 
 /**
  * Format TaskItems to Theme Text (Right Pane format)
+ * Default ([Uncategorized]) is placed at the bottom.
  */
 export const formatTasksToThemeText = (tasks: TaskItem[]): string => {
-  const themeSet = new Set<string>();
-  themeSet.add('Uncategorized');
-  tasks.forEach((t) => themeSet.add(t.theme || 'Uncategorized'));
+  const themeList: string[] = [];
+  tasks.forEach((t) => {
+    if (t.theme) themeList.push(t.theme);
+  });
 
-  // Keep Uncategorized first (just like !inbox on the left), followed by themes in order of appearance
-  const themes = Array.from(themeSet);
-
+  const orderedThemes = organizeSections(themeList, 'Uncategorized');
   const sections: string[] = [];
 
-  for (const theme of themes) {
-    const themeTasks = tasks.filter((t) => (t.theme || 'Uncategorized') === theme);
-    if (themeTasks.length === 0 && theme !== 'Uncategorized') {
+  for (const theme of orderedThemes) {
+    const themeTasks = tasks.filter((t) => (t.theme || 'Uncategorized').toLowerCase() === theme.toLowerCase());
+    if (themeTasks.length === 0 && theme.toLowerCase() !== 'uncategorized') {
       continue;
     }
 
@@ -309,7 +385,7 @@ export const formatTasksToThemeText = (tasks: TaskItem[]): string => {
       if (task.dueDate) {
         taskLine += ` #${task.dueDate}`;
       }
-      if (task.category && task.category !== 'inbox') {
+      if (task.category && task.category.toLowerCase() !== 'inbox') {
         taskLine += ` !${task.category}`;
       }
       lines.push(taskLine);
@@ -323,6 +399,53 @@ export const formatTasksToThemeText = (tasks: TaskItem[]): string => {
   }
 
   return sections.join('\n\n');
+};
+
+/**
+ * Extract hierarchical section headers from text with position and depth info.
+ */
+export const extractSectionsFromText = (
+  text: string,
+  paneType: PaneType
+): SectionItem[] => {
+  const lines = text.split('\n');
+  const sections: SectionItem[] = [];
+  const defaultName = paneType === 'category' ? 'inbox' : 'Uncategorized';
+  let charOffset = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isHeader = isSectionHeader(line, paneType);
+
+    if (isHeader) {
+      let rawName = '';
+      if (paneType === 'category') {
+        rawName = line.trim().replace(/^[!！]/, '').trim();
+      } else {
+        rawName = line.trim().replace(/^[\[［]/, '').replace(/[\]］]$/, '').trim();
+      }
+
+      if (rawName) {
+        const parts = rawName.split(':').map((p) => p.trim());
+        const depth = Math.max(0, parts.length - 1);
+        const displayName = parts[parts.length - 1] || rawName;
+        const isDefault = rawName.toLowerCase() === defaultName.toLowerCase();
+
+        sections.push({
+          raw: rawName,
+          displayName,
+          depth,
+          lineIndex: i,
+          charIndex: charOffset,
+          isDefault,
+        });
+      }
+    }
+
+    charOffset += line.length + 1; // +1 for '\n'
+  }
+
+  return sections;
 };
 
 /**

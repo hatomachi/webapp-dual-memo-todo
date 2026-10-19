@@ -1,6 +1,7 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { PaneType } from '../types/todo';
-import { isCategoryHeader, isThemeHeader, isCommentLine } from '../utils/parser';
+import { isCategoryHeader, isThemeHeader, isCommentLine, extractSectionsFromText } from '../utils/parser';
+import { SectionNav } from './SectionNav';
 
 interface MemoPaneProps {
   type: PaneType;
@@ -27,8 +28,38 @@ export const MemoPane: React.FC<MemoPaneProps> = ({
   onFocus,
   onBlur,
 }) => {
+  const [isNavOpen, setIsNavOpen] = useState<boolean>(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
+
+  const sections = useMemo(() => {
+    return extractSectionsFromText(text, type);
+  }, [text, type]);
+
+  // Jump to section line and scroll smoothly
+  const handleSelectSection = (charIndex: number, lineIndex: number) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.focus();
+    textarea.setSelectionRange(charIndex, charIndex);
+
+    // Line height is leading-7 (28px = 1.75rem)
+    const lineHeight = 28;
+    const targetScrollTop = Math.max(0, (lineIndex - 1) * lineHeight);
+
+    textarea.scrollTo({
+      top: targetScrollTop,
+      behavior: 'smooth',
+    });
+
+    if (backdropRef.current) {
+      backdropRef.current.scrollTo({
+        top: targetScrollTop,
+        behavior: 'smooth',
+      });
+    }
+  };
 
   // Sync scroll position between textarea and highlight backdrop
   const syncScroll = () => {
@@ -122,81 +153,93 @@ export const MemoPane: React.FC<MemoPaneProps> = ({
         </div>
       </div>
 
-      {/* Notepad Editor Container with Backdrop Highlight */}
-      <div className="relative flex-1 overflow-hidden bg-white">
-        {/* Backdrop Layer: renders only light marker backgrounds & comment ↳ symbol */}
-        <div
-          ref={backdropRef}
-          aria-hidden="true"
-          className="notepad-layer absolute inset-0 overflow-y-auto overflow-x-hidden pointer-events-none select-none font-mono text-sm leading-7 py-3 pl-6 pr-4 whitespace-pre-wrap break-words text-transparent"
-        >
-          {lines.map((line, idx) => {
-            const isHeader =
-              type === 'category'
-                ? isCategoryHeader(line)
-                : isThemeHeader(line);
+      {/* Main Body: SectionNav on the left, Notepad Editor on the right */}
+      <div className="relative flex-1 flex overflow-hidden bg-white">
+        {/* Left Section Navigation */}
+        <SectionNav
+          sections={sections}
+          paneType={type}
+          isOpen={isNavOpen}
+          onToggleOpen={() => setIsNavOpen(!isNavOpen)}
+          onSelectSection={handleSelectSection}
+        />
 
-            if (isHeader) {
+        {/* Notepad Editor Container with Backdrop Highlight */}
+        <div className="relative flex-1 h-full overflow-hidden bg-white">
+          {/* Backdrop Layer: renders only light marker backgrounds & comment ↳ symbol */}
+          <div
+            ref={backdropRef}
+            aria-hidden="true"
+            className="notepad-layer absolute inset-0 overflow-y-auto overflow-x-hidden pointer-events-none select-none font-mono text-sm leading-7 py-3 pl-6 pr-4 whitespace-pre-wrap break-words text-transparent"
+          >
+            {lines.map((line, idx) => {
+              const isHeader =
+                type === 'category'
+                  ? isCategoryHeader(line)
+                  : isThemeHeader(line);
+
+              if (isHeader) {
+                return (
+                  <div
+                    key={idx}
+                    className="bg-yellow-100/90 -mx-2 px-2 rounded-sm min-h-[1.75rem]"
+                  >
+                    {line || '\u200B'}
+                  </div>
+                );
+              }
+
+              if (isCommentLine(line)) {
+                const indentMatch = line.match(/^[ \t\u3000]+/);
+                const indentStr = indentMatch ? indentMatch[0] : '';
+                const bodyStr = line.slice(indentStr.length);
+                const isNarrowIndent = indentStr === ' ';
+
+                return (
+                  <div
+                    key={idx}
+                    className="bg-slate-100/90 -mx-1 px-1 rounded-sm min-h-[1.75rem]"
+                  >
+                    <span className="relative">
+                      {indentStr}
+                      <span
+                        className={`absolute top-0 text-slate-400 font-normal select-none ${
+                          isNarrowIndent ? '-left-3.5' : 'left-0'
+                        }`}
+                      >
+                        ↳
+                      </span>
+                    </span>
+                    {bodyStr || '\u200B'}
+                  </div>
+                );
+              }
+
               return (
-                <div
-                  key={idx}
-                  className="bg-yellow-100/90 -mx-2 px-2 rounded-sm min-h-[1.75rem]"
-                >
+                <div key={idx} className="min-h-[1.75rem]">
                   {line || '\u200B'}
                 </div>
               );
-            }
+            })}
+          </div>
 
-            if (isCommentLine(line)) {
-              const indentMatch = line.match(/^[ \t\u3000]+/);
-              const indentStr = indentMatch ? indentMatch[0] : '';
-              const bodyStr = line.slice(indentStr.length);
-              const isNarrowIndent = indentStr === ' ';
-
-              return (
-                <div
-                  key={idx}
-                  className="bg-slate-100/90 -mx-1 px-1 rounded-sm min-h-[1.75rem]"
-                >
-                  <span className="relative">
-                    {indentStr}
-                    <span
-                      className={`absolute top-0 text-slate-400 font-normal select-none ${
-                        isNarrowIndent ? '-left-3.5' : 'left-0'
-                      }`}
-                    >
-                      ↳
-                    </span>
-                  </span>
-                  {bodyStr || '\u200B'}
-                </div>
-              );
-            }
-
-            return (
-              <div key={idx} className="min-h-[1.75rem]">
-                {line || '\u200B'}
-              </div>
-            );
-          })}
+          {/* Foreground Native Textarea */}
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={(e) => onChangeText(e.target.value)}
+            onScroll={syncScroll}
+            onFocus={onFocus}
+            onBlur={onBlur}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoComplete="off"
+            autoCorrect="off"
+            className="notepad-layer relative z-10 w-full h-full overflow-y-auto overflow-x-hidden font-mono text-sm leading-7 py-3 pl-6 pr-4 whitespace-pre-wrap break-words text-slate-800 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-300"
+          />
         </div>
-
-        {/* Foreground Native Textarea */}
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(e) => onChangeText(e.target.value)}
-          onScroll={syncScroll}
-          onFocus={onFocus}
-          onBlur={onBlur}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          spellCheck={false}
-          autoCapitalize="off"
-          autoComplete="off"
-          autoCorrect="off"
-          className="notepad-layer relative z-10 w-full h-full overflow-y-auto overflow-x-hidden font-mono text-sm leading-7 py-3 pl-6 pr-4 whitespace-pre-wrap break-words text-slate-800 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-300"
-        />
       </div>
     </div>
   );
