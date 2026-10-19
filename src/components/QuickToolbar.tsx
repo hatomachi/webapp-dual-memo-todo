@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   CornerDownRight,
   Hash,
@@ -11,12 +11,15 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { PaneType } from '../types/todo';
+import { QuickDatePalette } from './QuickDatePalette';
 
 interface QuickToolbarProps {
   activePane: PaneType;
   onTogglePane?: () => void;
   onInsertText: (before: string, after?: string) => void;
   onInsertIndentComment: () => void;
+  onInsertDueDate: (dateStr: string) => void;
+  onOpenCalendar: () => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -107,6 +110,8 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
   onTogglePane,
   onInsertText,
   onInsertIndentComment,
+  onInsertDueDate,
+  onOpenCalendar,
   canUndo,
   canRedo,
   onUndo,
@@ -117,56 +122,82 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
   isDirty,
   isKeyboardOpen = false,
 }) => {
+  const [isDatePaletteOpen, setIsDatePaletteOpen] = useState(false);
+
   return (
-    <div
-      className="bg-slate-800 text-slate-200 border-t border-slate-700 px-2 pt-1.5 flex items-center justify-between gap-1 select-none shadow-lg z-20 flex-shrink-0"
-      style={{
-        paddingBottom: isKeyboardOpen
-          ? '0.375rem'
-          : 'max(0.375rem, env(safe-area-inset-bottom))',
-      }}
-    >
-      {/* Quick Insert Symbols & Active Pane Pill */}
-      <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
-        <ToolbarButton
-          onTrigger={() => onTogglePane?.()}
-          className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono tracking-tight flex-shrink-0 cursor-pointer ${
-            activePane === 'category'
-              ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-              : 'bg-blue-950 text-blue-400 border border-blue-800'
-          }`}
-          title="現在操作中のペイン（タップで切替）"
-        >
-          {activePane === 'category' ? '!分類' : '[テーマ]'}
-        </ToolbarButton>
+    <div className="flex flex-col flex-shrink-0 z-20">
+      {/* Quick Date Palette (slides over just above the toolbar) */}
+      <QuickDatePalette
+        isOpen={isDatePaletteOpen}
+        onSelectDate={(dateStr) => {
+          onInsertDueDate(dateStr);
+          setIsDatePaletteOpen(false);
+        }}
+        onOpenCalendar={() => {
+          setIsDatePaletteOpen(false);
+          onOpenCalendar();
+        }}
+        onInsertRawHash={() => {
+          onInsertText('#');
+          setIsDatePaletteOpen(false);
+        }}
+        onClose={() => setIsDatePaletteOpen(false)}
+      />
 
-        {/* Indent comment button */}
-        <ToolbarButton
-          onTrigger={onInsertIndentComment}
-          className="flex items-center gap-1 px-2.5 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs font-medium text-slate-100 transition-colors whitespace-nowrap cursor-pointer"
-          title="次の行に字下げコメントを挿入"
-        >
-          <CornerDownRight className="w-3.5 h-3.5 text-amber-400" />
-          <span>↳字下げ</span>
-        </ToolbarButton>
+      {/* Main Toolbar */}
+      <div
+        className="bg-slate-800 text-slate-200 border-t border-slate-700 px-2 pt-1.5 flex items-center justify-between gap-1 select-none shadow-lg flex-shrink-0"
+        style={{
+          paddingBottom: isKeyboardOpen
+            ? '0.375rem'
+            : 'max(0.375rem, env(safe-area-inset-bottom))',
+        }}
+      >
+        {/* Quick Insert Symbols & Active Pane Pill */}
+        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+          <ToolbarButton
+            onTrigger={() => onTogglePane?.()}
+            className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono tracking-tight flex-shrink-0 cursor-pointer ${
+              activePane === 'category'
+                ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                : 'bg-blue-950 text-blue-400 border border-blue-800'
+            }`}
+            title="現在操作中のペイン（タップで切替）"
+          >
+            {activePane === 'category' ? '!分類' : '[テーマ]'}
+          </ToolbarButton>
 
-        {/* Bullet item button */}
-        <ToolbarButton
-          onTrigger={() => onInsertText('・')}
-          className="flex items-center justify-center px-2.5 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs font-bold text-amber-300 hover:text-white transition-colors min-w-[30px] cursor-pointer"
-          title="TODO行頭 (・)"
-        >
-          <span>・</span>
-        </ToolbarButton>
+          {/* Indent comment button */}
+          <ToolbarButton
+            onTrigger={onInsertIndentComment}
+            className="flex items-center gap-1 px-2.5 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs font-medium text-slate-100 transition-colors whitespace-nowrap cursor-pointer"
+            title="次の行に字下げコメントを挿入"
+          >
+            <CornerDownRight className="w-3.5 h-3.5 text-amber-400" />
+            <span>↳字下げ</span>
+          </ToolbarButton>
 
-        {/* Date hashtag */}
-        <ToolbarButton
-          onTrigger={() => onInsertText('#')}
-          className="flex items-center justify-center px-2 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs font-mono font-bold text-emerald-400 transition-colors min-w-[32px] cursor-pointer"
-          title="期日タグ (#MM/DD)"
-        >
-          <Hash className="w-3.5 h-3.5" />
-        </ToolbarButton>
+          {/* Bullet item button */}
+          <ToolbarButton
+            onTrigger={() => onInsertText('・')}
+            className="flex items-center justify-center px-2.5 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs font-bold text-amber-300 hover:text-white transition-colors min-w-[30px] cursor-pointer"
+            title="TODO行頭 (・)"
+          >
+            <span>・</span>
+          </ToolbarButton>
+
+          {/* Date hashtag & Quick Palette toggle */}
+          <ToolbarButton
+            onTrigger={() => setIsDatePaletteOpen((prev) => !prev)}
+            className={`flex items-center justify-center px-2 py-1 rounded text-xs font-mono font-bold transition-all min-w-[32px] cursor-pointer ${
+              isDatePaletteOpen
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-emerald-400'
+            }`}
+            title="期日タグ・候補パレット (#MM/DD)"
+          >
+            <Hash className="w-3.5 h-3.5" />
+          </ToolbarButton>
 
         {/* Theme brackets */}
         <ToolbarButton
@@ -241,6 +272,7 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
           <span>反映</span>
         </ToolbarButton>
       </div>
+    </div>
     </div>
   );
 };

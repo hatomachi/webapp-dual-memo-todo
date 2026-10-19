@@ -8,7 +8,7 @@ export const generateId = (): string => {
 };
 
 // Date regex matching #MM/DD, #M/D, #YYYY/MM/DD, #YYYY-MM-DD (also full-width ＃)
-const DUE_DATE_REGEX = /[#＃](?:(\d{4}[-/])?\d{1,2}[-/]\d{1,2})/;
+export const DUE_DATE_REGEX = /[#＃](?:(\d{4}[-/])?\d{1,2}[-/]\d{1,2})/;
 // Theme tag matching [ThemeName] or ［ThemeName］
 const THEME_TAG_REGEX = /[\[［]([^\[\]［］]+)[\]］]/;
 // Category tag matching !categoryName or ！categoryName

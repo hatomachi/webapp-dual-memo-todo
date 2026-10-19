@@ -14,12 +14,15 @@ import {
   isThemeHeader,
   isCommentLine,
   extractSectionsFromText,
+  DUE_DATE_REGEX,
 } from '../utils/parser';
 import { SectionNav } from './SectionNav';
 
 export interface MemoPaneHandle {
   insertText: (before: string, after?: string) => void;
   insertIndentComment: () => void;
+  insertDueDate: (dateStr: string) => void;
+  getCurrentLineDueDate: () => string | null;
   toggleNav: () => void;
   focus: () => void;
   getCursorLineAndCol: () => { lineIdx: number; col: number } | null;
@@ -292,6 +295,79 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
           syncBackdropScroll();
           ensureCaretVisible();
         });
+      },
+
+      insertDueDate: (dateStr: string) => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+
+        const start = textarea.selectionStart ?? text.length;
+        const val = text;
+
+        // Find the start and end of the current line
+        const lineStart = val.lastIndexOf('\n', start - 1) + 1;
+        const lineEndIdx = val.indexOf('\n', start);
+        const lineEnd = lineEndIdx === -1 ? val.length : lineEndIdx;
+        const currentLine = val.substring(lineStart, lineEnd);
+
+        // Check if caret is immediately after a '#' or '＃'
+        const charBefore = start > 0 ? val[start - 1] : '';
+        const isRightAfterHash = charBefore === '#' || charBefore === '＃';
+
+        // Check if current line already contains a due date tag (#MM/DD, etc.)
+        const match = currentLine.match(DUE_DATE_REGEX);
+
+        let newText: string;
+        let newCursorPos: number;
+
+        if (match && match.index !== undefined) {
+          // Replace existing due date in current line
+          const matchStart = lineStart + match.index;
+          const matchEnd = matchStart + match[0].length;
+          const replacement = `#${dateStr}`;
+          newText = val.substring(0, matchStart) + replacement + val.substring(matchEnd);
+          newCursorPos = matchStart + replacement.length;
+        } else if (isRightAfterHash) {
+          // Caret is directly after #, so replace '#' with '#MM/DD '
+          const replacement = `#${dateStr} `;
+          newText = val.substring(0, start - 1) + replacement + val.substring(start);
+          newCursorPos = start - 1 + replacement.length;
+        } else {
+          // Insert at caret position. Ensure leading space if preceded by non-space/non-newline
+          const needsLeadingSpace =
+            charBefore !== '' &&
+            charBefore !== ' ' &&
+            charBefore !== '\n' &&
+            charBefore !== '　';
+          const tagToInsert = `${needsLeadingSpace ? ' ' : ''}#${dateStr} `;
+          newText = val.substring(0, start) + tagToInsert + val.substring(start);
+          newCursorPos = start + tagToInsert.length;
+        }
+
+        onChangeText(newText);
+
+        requestAnimationFrame(() => {
+          textarea.focus({ preventScroll: true });
+          textarea.setSelectionRange(newCursorPos, newCursorPos);
+          syncBackdropScroll();
+          ensureCaretVisible();
+        });
+      },
+
+      getCurrentLineDueDate: () => {
+        const textarea = textareaRef.current;
+        if (!textarea) return null;
+        const start = textarea.selectionStart ?? text.length;
+        const val = text;
+        const lineStart = val.lastIndexOf('\n', start - 1) + 1;
+        const lineEndIdx = val.indexOf('\n', start);
+        const lineEnd = lineEndIdx === -1 ? val.length : lineEndIdx;
+        const currentLine = val.substring(lineStart, lineEnd);
+        const match = currentLine.match(DUE_DATE_REGEX);
+        if (match) {
+          return match[0].replace(/^[#＃]/, '').trim();
+        }
+        return null;
       },
 
       toggleNav: () => {

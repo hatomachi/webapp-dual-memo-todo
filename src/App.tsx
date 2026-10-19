@@ -15,6 +15,7 @@ import { MemoPane, MemoPaneHandle } from './components/MemoPane';
 import { HelpModal } from './components/HelpModal';
 import { HistoryModal } from './components/HistoryModal';
 import { SettingsModal } from './components/SettingsModal';
+import { CalendarPickerModal } from './components/CalendarPickerModal';
 import { QuickToolbar } from './components/QuickToolbar';
 import { useVisualViewport } from './hooks/useVisualViewport';
 import { HistoryState } from './types/history';
@@ -60,6 +61,7 @@ export const App: React.FC = () => {
   const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isCalendarOpen, setIsCalendarOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // History state (30 generations undo/redo)
@@ -642,6 +644,14 @@ export const App: React.FC = () => {
     getActivePaneHandle()?.insertIndentComment();
   };
 
+  const handleQuickInsertDueDate = (dateStr: string) => {
+    getActivePaneHandle()?.insertDueDate(dateStr);
+  };
+
+  const handleOpenCalendar = () => {
+    setIsCalendarOpen(true);
+  };
+
   const handleQuickToggleNav = () => {
     getActivePaneHandle()?.toggleNav();
   };
@@ -772,6 +782,8 @@ export const App: React.FC = () => {
         }}
         onInsertText={handleQuickInsertText}
         onInsertIndentComment={handleQuickInsertIndent}
+        onInsertDueDate={handleQuickInsertDueDate}
+        onOpenCalendar={handleOpenCalendar}
         canUndo={canUndo}
         canRedo={canRedo}
         onUndo={handleUndo}
@@ -795,6 +807,13 @@ export const App: React.FC = () => {
         snapshots={historyState.snapshots}
         currentIndex={historyState.currentIndex}
         onRestore={handleRestoreSnapshot}
+      />
+
+      <CalendarPickerModal
+        isOpen={isCalendarOpen}
+        onClose={() => setIsCalendarOpen(false)}
+        onSelectDate={handleQuickInsertDueDate}
+        selectedDateStr={getActivePaneHandle()?.getCurrentLineDueDate()}
       />
 
       <SettingsModal
