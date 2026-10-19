@@ -1,8 +1,9 @@
 import React, {
   useRef,
-  useEffect,
+  useLayoutEffect,
   useState,
   useMemo,
+  useCallback,
   useImperativeHandle,
   forwardRef,
 } from 'react';
@@ -35,6 +36,20 @@ interface MemoPaneProps {
   onBlur: () => void;
 }
 
+const NAVIGATION_KEYS = new Set([
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+  'Enter',
+  'Backspace',
+  'Delete',
+]);
+
 export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
   (
     {
@@ -52,12 +67,62 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
     ref
   ) => {
     const [isNavOpen, setIsNavOpen] = useState<boolean>(false);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const backdropRef = useRef<HTMLDivElement>(null);
+    const pointerDownScrollTopRef = useRef<number | null>(null);
 
     const sections = useMemo(() => {
       return extractSectionsFromText(text, type);
     }, [text, type]);
+
+    // Ensure the active caret line is visible within the single scroll container
+    const ensureCaretVisible = useCallback(() => {
+      const textarea = textareaRef.current;
+      const container = scrollContainerRef.current;
+      const backdrop = backdropRef.current;
+      if (!textarea || !container || !backdrop) return;
+      if (document.activeElement !== textarea) return;
+
+      const caretPos = textarea.selectionEnd ?? 0;
+      const textBefore = textarea.value.substring(0, caretPos);
+      const lineIdx = textBefore.split('\n').length - 1;
+      const lineEl = backdrop.children[lineIdx] as HTMLElement | undefined;
+      if (!lineEl) return;
+
+      const lineTop = lineEl.offsetTop;
+      const lineBottom = lineTop + lineEl.offsetHeight;
+      const viewTop = container.scrollTop;
+      const viewBottom = viewTop + container.clientHeight;
+      const padding = 28; // 1 line of breathing room
+
+      if (lineTop < viewTop + 12) {
+        container.scrollTop = Math.max(0, lineTop - 12);
+      } else if (lineBottom + padding > viewBottom) {
+        container.scrollTop = lineBottom + padding - container.clientHeight;
+      }
+    }, []);
+
+    // Prevent any internal textarea scroll offset; forward it to the parent scroll container
+    const normalizeTextareaInternalScroll = useCallback(() => {
+      const textarea = textareaRef.current;
+      const container = scrollContainerRef.current;
+      if (!textarea) return;
+
+      if (textarea.scrollTop !== 0) {
+        if (container) {
+          container.scrollTop += textarea.scrollTop;
+        }
+        textarea.scrollTop = 0;
+      }
+      if (textarea.scrollLeft !== 0) {
+        textarea.scrollLeft = 0;
+      }
+    }, []);
+
+    useLayoutEffect(() => {
+      normalizeTextareaInternalScroll();
+    }, [text, normalizeTextareaInternalScroll]);
 
     // Expose manipulation methods to parent (for QuickToolbar)
     useImperativeHandle(ref, () => ({
@@ -75,8 +140,9 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
 
         const targetCursor = start + before.length + selected.length;
         requestAnimationFrame(() => {
-          textarea.focus();
+          textarea.focus({ preventScroll: true });
           textarea.setSelectionRange(targetCursor, targetCursor);
+          ensureCaretVisible();
         });
       },
 
@@ -99,8 +165,9 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
 
         const newCursorPos = insertPos + 3; // \n + 2 spaces
         requestAnimationFrame(() => {
-          textarea.focus();
+          textarea.focus({ preventScroll: true });
           textarea.setSelectionRange(newCursorPos, newCursorPos);
+          ensureCaretVisible();
         });
       },
 
@@ -109,51 +176,35 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       },
 
       focus: () => {
-        textareaRef.current?.focus();
+        textareaRef.current?.focus({ preventScroll: true });
       },
     }));
 
-    // Jump to section line and scroll smoothly
+    // Jump to section line and scroll smoothly using exact DOM line offset
     const handleSelectSection = (charIndex: number, lineIndex: number) => {
       const textarea = textareaRef.current;
-      if (!textarea) return;
+      const container = scrollContainerRef.current;
+      const backdrop = backdropRef.current;
+      if (!textarea || !container) return;
 
-      textarea.focus();
+      textarea.focus({ preventScroll: true });
       textarea.setSelectionRange(charIndex, charIndex);
 
-      // Line height is leading-7 (28px = 1.75rem)
-      const lineHeight = 28;
-      const targetScrollTop = Math.max(0, (lineIndex - 1) * lineHeight);
+      const lineEl = backdrop?.children[lineIndex] as HTMLElement | undefined;
+      const targetScrollTop = lineEl
+        ? Math.max(0, lineEl.offsetTop - 12)
+        : Math.max(0, (lineIndex - 1) * 28);
 
-      textarea.scrollTo({
+      container.scrollTo({
         top: targetScrollTop,
         behavior: 'smooth',
       });
-
-      if (backdropRef.current) {
-        backdropRef.current.scrollTo({
-          top: targetScrollTop,
-          behavior: 'smooth',
-        });
-      }
 
       // Close mobile drawer on selection
       if (window.innerWidth < 640) {
         setIsNavOpen(false);
       }
     };
-
-    // Sync scroll position between textarea and highlight backdrop
-    const syncScroll = () => {
-      if (textareaRef.current && backdropRef.current) {
-        backdropRef.current.scrollTop = textareaRef.current.scrollTop;
-        backdropRef.current.scrollLeft = textareaRef.current.scrollLeft;
-      }
-    };
-
-    useEffect(() => {
-      syncScroll();
-    }, [text]);
 
     // Handle Tab indentation and Ctrl+S / Cmd+S sync
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -207,6 +258,40 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
           });
         }
       }
+    };
+
+    const handleKeyUp = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (NAVIGATION_KEYS.has(e.key)) {
+        ensureCaretVisible();
+      }
+    };
+
+    const handlePointerDown = () => {
+      if (
+        document.activeElement !== textareaRef.current &&
+        scrollContainerRef.current
+      ) {
+        pointerDownScrollTopRef.current = scrollContainerRef.current.scrollTop;
+      } else {
+        pointerDownScrollTopRef.current = null;
+      }
+    };
+
+    const handleFocus = () => {
+      if (
+        pointerDownScrollTopRef.current !== null &&
+        scrollContainerRef.current
+      ) {
+        const savedTop = pointerDownScrollTopRef.current;
+        scrollContainerRef.current.scrollTop = savedTop;
+        requestAnimationFrame(() => {
+          if (scrollContainerRef.current) {
+            scrollContainerRef.current.scrollTop = savedTop;
+          }
+          pointerDownScrollTopRef.current = null;
+        });
+      }
+      onFocus();
     };
 
     const lines = text.split('\n');
@@ -286,81 +371,91 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
             />
           </div>
 
-          {/* Notepad Editor Container with Backdrop Highlight */}
-          <div className="relative flex-1 h-full overflow-hidden bg-white">
-            {/* Backdrop Layer */}
-            <div
-              ref={backdropRef}
-              aria-hidden="true"
-              className="notepad-layer absolute inset-0 overflow-y-auto overflow-x-hidden pointer-events-none select-none font-mono text-base sm:text-sm leading-7 py-3 pl-4 sm:pl-6 pr-3 sm:pr-4 whitespace-pre-wrap break-words text-transparent"
-            >
-              {lines.map((line, idx) => {
-                const isHeader =
-                  type === 'category'
-                    ? isCategoryHeader(line)
-                    : isThemeHeader(line);
+          {/* Single Scroll Container holding both Backdrop and Textarea in lockstep */}
+          <div
+            ref={scrollContainerRef}
+            className="notepad-scroll-container relative flex-1 h-full overflow-y-auto overflow-x-hidden bg-white"
+          >
+            <div className="notepad-grid">
+              {/* Backdrop Layer (in-flow inside grid cell 1/1, stretches container height) */}
+              <div
+                ref={backdropRef}
+                aria-hidden="true"
+                className="notepad-layer overflow-hidden pointer-events-none select-none pt-3 pb-16 pl-4 sm:pl-6 pr-3 sm:pr-4 text-transparent"
+              >
+                {lines.map((line, idx) => {
+                  const isHeader =
+                    type === 'category'
+                      ? isCategoryHeader(line)
+                      : isThemeHeader(line);
 
-                if (isHeader) {
-                  return (
-                    <div
-                      key={idx}
-                      className="bg-yellow-100/90 -mx-2 px-2 rounded-sm min-h-[1.75rem]"
-                    >
-                      {line || '\u200B'}
-                    </div>
-                  );
-                }
+                  if (isHeader) {
+                    return (
+                      <div
+                        key={idx}
+                        className="notepad-line bg-yellow-100/90 -mx-2 px-2 rounded-sm"
+                      >
+                        {line || '\u200B'}
+                      </div>
+                    );
+                  }
 
-                if (isCommentLine(line)) {
-                  const indentMatch = line.match(/^[ \t\u3000]+/);
-                  const indentStr = indentMatch ? indentMatch[0] : '';
-                  const bodyStr = line.slice(indentStr.length);
-                  const isNarrowIndent = indentStr === ' ';
+                  if (isCommentLine(line)) {
+                    const indentMatch = line.match(/^[ \t\u3000]+/);
+                    const indentStr = indentMatch ? indentMatch[0] : '';
+                    const isNarrowIndent = indentStr === ' ';
 
-                  return (
-                    <div
-                      key={idx}
-                      className="bg-slate-100/90 -mx-1 px-1 rounded-sm min-h-[1.75rem]"
-                    >
-                      <span className="relative">
-                        {indentStr}
+                    return (
+                      <div
+                        key={idx}
+                        className="notepad-line relative bg-slate-100/90 -mx-1 px-1 rounded-sm"
+                      >
                         <span
-                          className={`absolute top-0 text-slate-400 font-normal select-none ${
-                            isNarrowIndent ? '-left-3' : 'left-0'
+                          aria-hidden="true"
+                          className={`absolute top-0 text-slate-400 font-normal select-none pointer-events-none ${
+                            isNarrowIndent ? '-left-2' : 'left-1'
                           }`}
                         >
                           ↳
                         </span>
-                      </span>
-                      {bodyStr || '\u200B'}
+                        {line || '\u200B'}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={idx} className="notepad-line">
+                      {line || '\u200B'}
                     </div>
                   );
-                }
+                })}
+              </div>
 
-                return (
-                  <div key={idx} className="min-h-[1.75rem]">
-                    {line || '\u200B'}
-                  </div>
-                );
-              })}
+              {/* Foreground Native Textarea (shares grid cell 1/1, never scrolls independently) */}
+              <textarea
+                ref={textareaRef}
+                value={text}
+                onChange={(e) => {
+                  onChangeText(e.target.value);
+                  requestAnimationFrame(() => {
+                    normalizeTextareaInternalScroll();
+                    ensureCaretVisible();
+                  });
+                }}
+                onScroll={normalizeTextareaInternalScroll}
+                onPointerDown={handlePointerDown}
+                onFocus={handleFocus}
+                onBlur={onBlur}
+                onKeyDown={handleKeyDown}
+                onKeyUp={handleKeyUp}
+                placeholder={placeholder}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoComplete="off"
+                autoCorrect="off"
+                className="notepad-layer relative z-10 w-full h-full overflow-hidden pt-3 pb-16 pl-4 sm:pl-6 pr-3 sm:pr-4 text-slate-800 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-300"
+              />
             </div>
-
-            {/* Foreground Native Textarea */}
-            <textarea
-              ref={textareaRef}
-              value={text}
-              onChange={(e) => onChangeText(e.target.value)}
-              onScroll={syncScroll}
-              onFocus={onFocus}
-              onBlur={onBlur}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              spellCheck={false}
-              autoCapitalize="off"
-              autoComplete="off"
-              autoCorrect="off"
-              className="notepad-layer relative z-10 w-full h-full overflow-y-auto overflow-x-hidden font-mono text-base sm:text-sm leading-7 py-3 pl-4 sm:pl-6 pr-3 sm:pr-4 whitespace-pre-wrap break-words text-slate-800 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-300"
-            />
           </div>
         </div>
       </div>
@@ -369,3 +464,4 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
 );
 
 MemoPane.displayName = 'MemoPane';
+
