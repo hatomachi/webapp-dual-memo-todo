@@ -29,6 +29,7 @@ import {
   fetchFromGitHub,
   pushToGitHub,
 } from './utils/githubSync';
+import { checkForServiceWorkerUpdate } from './utils/pwaUpdate';
 
 const STORAGE_KEY_TASKS = 'dual_memo_tasks_v3';
 const STORAGE_KEY_CAT_TEXT = 'dual_memo_category_text_v3';
@@ -262,10 +263,12 @@ export const App: React.FC = () => {
   useEffect(() => {
     const onFocus = () => {
       syncWithRemote(true);
+      checkForServiceWorkerUpdate();
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         syncWithRemote(true);
+        checkForServiceWorkerUpdate();
       }
     };
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { GitHubSettings, SyncStatus } from '../types/github';
+import { APP_BUILD_TIME, clearPwaCacheAndReload } from '../utils/pwaUpdate';
 import {
   X,
   Settings,
@@ -12,6 +13,7 @@ import {
   AlertCircle,
   HelpCircle,
   RefreshCw,
+  Zap,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -46,6 +48,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [showToken, setShowToken] = useState(false);
   const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isClearingCache, setIsClearingCache] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -97,6 +100,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setActionError(err.message || 'プッシュに失敗しました');
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleClearCacheClick = async () => {
+    if (!window.confirm('ブラウザキャッシュをクリアしてアプリの最新版を再取得しますか？\n（※メモデータや設定は保持されます）')) {
+      return;
+    }
+    setIsClearingCache(true);
+    try {
+      await clearPwaCacheAndReload();
+    } catch (err: any) {
+      console.error('Failed to clear PWA cache:', err);
+      setActionError('キャッシュクリアに失敗しました: ' + (err.message || err));
+      setIsClearingCache(false);
     }
   };
 
@@ -306,10 +323,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ※スマホ等別端末で更新した場合は「取得」、ローカルで書き換えて今すぐリモートに反映したい場合は「保存」を実行できます。
             </p>
           </div>
+
+          {/* PWA Cache Management */}
+          <div className="border-t border-slate-200 pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-amber-500" />
+                <span>PWAアプリ更新 & キャッシュクリア</span>
+              </h3>
+            </div>
+            <div className="bg-amber-50/80 border border-amber-200 rounded-lg p-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="text-[11px] text-amber-950 leading-snug">
+                  <p className="font-semibold text-amber-900 mb-0.5">スマホPWAの最新版が反映されない場合</p>
+                  <p className="text-[10px] text-amber-800">
+                    ブラウザキャッシュ（JS/CSS）を全消去して強制リロードします。
+                    <span className="font-bold underline ml-1 text-amber-900">※メモや設定は保持されます</span>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleClearCacheClick}
+                  disabled={isClearingCache}
+                  className="shrink-0 flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg shadow-sm active:scale-95 transition-all"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isClearingCache ? 'animate-spin' : ''}`} />
+                  <span>{isClearingCache ? 'クリア中...' : '⚡️ 最新版に強制更新'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+        <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+          <div className="text-[10px] text-slate-400 font-mono">
+            build: {APP_BUILD_TIME}
+          </div>
           <button
             onClick={onClose}
             className="px-4 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 text-xs font-medium"
