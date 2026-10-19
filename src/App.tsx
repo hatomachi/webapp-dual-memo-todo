@@ -362,31 +362,44 @@ export const App: React.FC = () => {
       let newCats = categoriesRef.current;
       let newThms = themesRef.current;
 
+      const activeHandle = sourcePane === 'category' ? categoryPaneRef.current : themePaneRef.current;
+      const cursorInfo = activeHandle?.getCursorLineAndCol?.();
+
       if (sourcePane === 'category') {
         label = '左 ➔ 右 反映';
-        newCat = categoryTextRef.current;
-        newCats = extractCategorySections(newCat);
-        newTasks = parseCategoryText(newCat, tasksRef.current);
+        const rawCat = categoryTextRef.current;
+        newCats = extractCategorySections(rawCat);
+        newTasks = parseCategoryText(rawCat, tasksRef.current);
+        newCat = formatTasksToCategoryText(newTasks, newCats);
         newThm = formatTasksToThemeText(newTasks, newThms);
         updateCategories(newCats);
         updateTasks(newTasks);
+        updateCategoryText(newCat);
         updateThemeText(newThm);
         saveToStorage(newTasks, newCat, newThm, newCats, newThms);
         showToast('💾 左 ➔ 右へ反映しました');
       } else {
         label = '右 ➔ 左 反映';
-        newThm = themeTextRef.current;
-        newThms = extractThemeSections(newThm);
-        newTasks = parseThemeText(newThm, tasksRef.current);
+        const rawThm = themeTextRef.current;
+        newThms = extractThemeSections(rawThm);
+        newTasks = parseThemeText(rawThm, tasksRef.current);
+        newThm = formatTasksToThemeText(newTasks, newThms);
         newCat = formatTasksToCategoryText(newTasks, newCats);
         updateThemes(newThms);
         updateTasks(newTasks);
         updateCategoryText(newCat);
+        updateThemeText(newThm);
         saveToStorage(newTasks, newCat, newThm, newCats, newThms);
         showToast('💾 右 ➔ 左へ反映しました');
       }
 
       updateDirtyPane(null);
+
+      if (cursorInfo) {
+        requestAnimationFrame(() => {
+          activeHandle?.restoreCursorLineAndCol?.(cursorInfo.lineIdx, cursorInfo.col + 1);
+        });
+      }
 
       // Record snapshot to 30-generation history
       setHistoryState((prev) => addSnapshot(prev, label, newCat, newThm));
@@ -702,7 +715,7 @@ export const App: React.FC = () => {
               type="category"
               title="左ペイン（分類軸: !inbox）"
               subTitle="タスク行に [テーマ名] を書いて Ctrl+S で右へ反映"
-              placeholder={`!inbox\n牛乳を買う #10/25 [生活]\n  スーパーの特売日\n\n!ワーク\n企画書作成 #10/22 [仕事]`}
+              placeholder={`!inbox\n・牛乳を買う #10/25 [生活]\n  スーパーの特売日\n\n!ワーク\n・企画書作成 #10/22 [仕事]`}
               text={categoryText}
               isDirty={dirtyPane === 'category'}
               isKeyboardOpen={viewport.isKeyboardOpen}
@@ -727,7 +740,7 @@ export const App: React.FC = () => {
               type="theme"
               title="右ペイン（テーマ軸: [Uncategorized]）"
               subTitle="タスク行に !分類名 を書いて Ctrl+S で左へ反映"
-              placeholder={`[生活]\n牛乳を買う #10/25\n  スーパーの特売日\n\n[仕事]\n企画書作成 #10/22 !ワーク`}
+              placeholder={`[生活]\n・牛乳を買う #10/25\n  スーパーの特売日\n\n[仕事]\n・企画書作成 #10/22 !ワーク`}
               text={themeText}
               isDirty={dirtyPane === 'theme'}
               isKeyboardOpen={viewport.isKeyboardOpen}

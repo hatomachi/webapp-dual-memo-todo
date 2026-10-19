@@ -150,6 +150,15 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
           <span>↳字下げ</span>
         </ToolbarButton>
 
+        {/* Bullet item button */}
+        <ToolbarButton
+          onTrigger={() => onInsertText('・')}
+          className="flex items-center justify-center px-2.5 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs font-bold text-amber-300 hover:text-white transition-colors min-w-[30px] cursor-pointer"
+          title="TODO行頭 (・)"
+        >
+          <span>・</span>
+        </ToolbarButton>
+
         {/* Date hashtag */}
         <ToolbarButton
           onTrigger={() => onInsertText('#')}

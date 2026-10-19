@@ -15,6 +15,14 @@ const THEME_TAG_REGEX = /[\[［]([^\[\]［］]+)[\]］]/;
 const CATEGORY_TAG_REGEX = /(?:^|\s)[!！]([^\s\[\]［］#＃!！]+)/;
 
 /**
+ * Strip leading bullet characters ('・', '･', '•') and any leading whitespace from task title.
+ */
+export const cleanTaskTitle = (title: string): string => {
+  if (!title) return '';
+  return title.replace(/^[・･•]+\s*/, '').trim();
+};
+
+/**
  * Check if a line is an indented comment line.
  * Supports 1+ half-width spaces, full-width spaces (　), or tabs at the start of the line.
  */
@@ -126,13 +134,14 @@ export const parseCategoryText = (
       lineWorking = lineWorking.replace(catMatch[0], ' ');
     }
 
-    const title = lineWorking.replace(/\s+/g, ' ').trim();
+    const rawTitle = lineWorking.replace(/\s+/g, ' ').trim();
+    const title = cleanTaskTitle(rawTitle);
     if (!title) {
       continue;
     }
 
     const matchedExisting = existingTasks.find(
-      (t) => t.title === title && t.category === taskCategory
+      (t) => cleanTaskTitle(t.title) === title && t.category === taskCategory
     );
 
     currentTask = {
@@ -218,13 +227,14 @@ export const parseThemeText = (
       lineWorking = lineWorking.replace(themeMatch[0], ' ');
     }
 
-    const title = lineWorking.replace(/\s+/g, ' ').trim();
+    const rawTitle = lineWorking.replace(/\s+/g, ' ').trim();
+    const title = cleanTaskTitle(rawTitle);
     if (!title) {
       continue;
     }
 
     const matchedExisting = existingTasks.find(
-      (t) => t.title === title && t.theme === taskTheme
+      (t) => cleanTaskTitle(t.title) === title && t.theme === taskTheme
     );
 
     currentTask = {
@@ -344,7 +354,10 @@ export const formatTasksToCategoryText = (
     const lines: string[] = [`!${cat}`];
 
     for (const task of catTasks) {
-      let taskLine = task.title;
+      const cleanTitle = cleanTaskTitle(task.title);
+      if (!cleanTitle) continue;
+
+      let taskLine = `・${cleanTitle}`;
       if (task.dueDate) {
         taskLine += ` #${task.dueDate}`;
       }
@@ -392,7 +405,10 @@ export const formatTasksToThemeText = (
     const lines: string[] = [`[${theme}]`];
 
     for (const task of themeTasks) {
-      let taskLine = task.title;
+      const cleanTitle = cleanTaskTitle(task.title);
+      if (!cleanTitle) continue;
+
+      let taskLine = `・${cleanTitle}`;
       if (task.dueDate) {
         taskLine += ` #${task.dueDate}`;
       }

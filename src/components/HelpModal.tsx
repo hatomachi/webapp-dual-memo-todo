@@ -53,6 +53,13 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
             </div>
 
             <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+              <span className="font-bold text-slate-800">・TODO行（自動中黒）</span>
+              <p className="font-sans text-slate-600 mt-0.5">
+                通常のタスク行は行頭に <code className="bg-slate-200 px-1 py-0.5 rounded font-mono">・</code> が表示されます。入力時に <code className="bg-slate-200 px-1 py-0.5 rounded font-mono">・</code> を付けても省いて保存され、<code className="bg-slate-200 px-1 py-0.5 rounded font-mono">・</code> を付けずに書いても保存・反映時に自動で付与されます。
+              </p>
+            </div>
+
+            <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
               <span className="font-bold text-amber-700">#MM/DD（期日タグ）</span>
               <p className="font-sans text-slate-600 mt-0.5">
                 タスク行に <code className="bg-slate-200 px-1 py-0.5 rounded font-mono">#10/25</code> と書くと期日として認識され、「期日ソート」で昇順に並び替えられます。

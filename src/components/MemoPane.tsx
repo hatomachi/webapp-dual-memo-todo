@@ -22,6 +22,8 @@ export interface MemoPaneHandle {
   insertIndentComment: () => void;
   toggleNav: () => void;
   focus: () => void;
+  getCursorLineAndCol: () => { lineIdx: number; col: number } | null;
+  restoreCursorLineAndCol: (lineIdx: number, col: number) => void;
 }
 
 interface MemoPaneProps {
@@ -298,6 +300,39 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
 
       focus: () => {
         textareaRef.current?.focus({ preventScroll: true });
+      },
+
+      getCursorLineAndCol: () => {
+        const textarea = textareaRef.current;
+        if (!textarea) return null;
+        const pos = textarea.selectionStart ?? 0;
+        const textBefore = textarea.value.substring(0, pos);
+        const lines = textBefore.split('\n');
+        return {
+          lineIdx: lines.length - 1,
+          col: lines[lines.length - 1].length,
+        };
+      },
+
+      restoreCursorLineAndCol: (lineIdx: number, col: number) => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        const lines = textarea.value.split('\n');
+        let currentOffset = 0;
+        for (let i = 0; i < lines.length; i++) {
+          if (i === lineIdx) {
+            const targetPos = currentOffset + Math.min(col, lines[i].length);
+            textarea.setSelectionRange(targetPos, targetPos);
+            syncBackdropScroll();
+            ensureCaretVisible();
+            return;
+          }
+          currentOffset += lines[i].length + 1;
+        }
+        const endPos = textarea.value.length;
+        textarea.setSelectionRange(endPos, endPos);
+        syncBackdropScroll();
+        ensureCaretVisible();
       },
     }));
 
