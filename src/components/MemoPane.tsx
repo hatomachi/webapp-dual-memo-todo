@@ -788,13 +788,13 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                       let chipClass = '';
                       if (token.tag.type === 'date') {
                         chipClass =
-                          'bg-emerald-200/70 rounded px-0 py-0.5 ring-1 ring-emerald-500/60';
+                          'border-b-[1.5px] border-dotted border-emerald-600/70 pb-[1px]';
                       } else if (token.tag.type === 'theme') {
                         chipClass =
-                          'bg-blue-200/70 rounded px-0 py-0.5 ring-1 ring-blue-500/60';
+                          'border-b-[1.5px] border-dotted border-blue-600/70 pb-[1px]';
                       } else if (token.tag.type === 'category') {
                         chipClass =
-                          'bg-amber-200/70 rounded px-0 py-0.5 ring-1 ring-amber-500/60';
+                          'border-b-[1.5px] border-dotted border-amber-600/70 pb-[1px]';
                       }
 
                       return (

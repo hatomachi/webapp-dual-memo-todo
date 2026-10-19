@@ -89,16 +89,16 @@ export const TagSuggestPalette: React.FC<TagSuggestPaletteProps> = ({
   return (
     <div
       onPointerDown={handlePointerDown}
-      className="bg-slate-900 border-b border-slate-700 text-slate-100 px-2 py-1.5 flex flex-col gap-1 select-none z-20 shadow-md animate-fadeIn"
+      className="bg-slate-800/98 border-b border-slate-700 text-slate-200 px-2.5 py-1.5 flex flex-col gap-1 select-none z-20 shadow-md animate-fadeIn"
       style={{ touchAction: 'manipulation' }}
     >
       {/* Header bar */}
       <div className="flex items-center justify-between px-1">
         <div className="flex items-center gap-1.5 text-xs font-medium">
           {titleIcon}
-          <span className="text-slate-300">{typeLabel} 候補</span>
+          <span className="text-slate-300 font-sans">{typeLabel} 候補</span>
           {cleanQuery && (
-            <span className="font-mono text-[11px] bg-slate-800 text-amber-300 px-1.5 py-0.2 rounded border border-slate-700 truncate max-w-[140px]">
+            <span className="font-mono text-[11px] bg-slate-900/80 text-amber-300 px-1.5 py-0.2 rounded border border-slate-700 truncate max-w-[140px]">
               {cleanQuery}
             </span>
           )}
@@ -107,7 +107,7 @@ export const TagSuggestPalette: React.FC<TagSuggestPaletteProps> = ({
         <button
           type="button"
           onClick={onClose}
-          className="p-1 text-slate-400 hover:text-slate-200 active:text-white rounded hover:bg-slate-800 transition-colors cursor-pointer"
+          className="p-1 text-slate-400 hover:text-slate-200 active:text-white rounded hover:bg-slate-700/60 transition-colors cursor-pointer"
           title="閉じる"
         >
           <X className="w-3.5 h-3.5" />
@@ -121,7 +121,7 @@ export const TagSuggestPalette: React.FC<TagSuggestPaletteProps> = ({
           <button
             type="button"
             onClick={() => handleSelectOption(cleanQuery)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/80 text-xs font-mono font-semibold whitespace-nowrap transition-colors flex-shrink-0 cursor-pointer shadow-xs"
+            className="flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-900/60 hover:bg-emerald-800/80 text-emerald-300 border border-emerald-700/60 text-xs font-mono font-medium whitespace-nowrap transition-colors flex-shrink-0 cursor-pointer shadow-2xs"
             title={`新規 "${cleanQuery}" として作成`}
           >
             <Plus className="w-3 h-3 text-emerald-400" />
@@ -140,21 +140,17 @@ export const TagSuggestPalette: React.FC<TagSuggestPaletteProps> = ({
                 key={opt.raw}
                 type="button"
                 onClick={() => handleSelectOption(opt.raw)}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono whitespace-nowrap transition-all flex-shrink-0 cursor-pointer border ${
-                  type === 'category'
-                    ? 'bg-amber-950/70 hover:bg-amber-900/90 text-amber-200 border-amber-800/80 hover:border-amber-600'
-                    : 'bg-blue-950/70 hover:bg-blue-900/90 text-blue-200 border-blue-800/80 hover:border-blue-600'
-                }`}
+                className="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono whitespace-nowrap transition-all flex-shrink-0 cursor-pointer bg-slate-700/70 hover:bg-slate-600/90 text-slate-200 border border-slate-600/60 hover:border-slate-500 shadow-2xs"
                 title={opt.raw}
               >
                 {isChild ? (
                   <div className="flex items-center gap-0.5">
-                    <span className="opacity-60">{parts.slice(0, -1).join(':')}</span>
-                    <ChevronRight className="w-3 h-3 opacity-50 flex-shrink-0" />
-                    <span className="font-semibold">{parts[parts.length - 1]}</span>
+                    <span className="text-slate-400 font-normal">{parts.slice(0, -1).join(':')}</span>
+                    <ChevronRight className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                    <span className="font-medium text-slate-100">{parts[parts.length - 1]}</span>
                   </div>
                 ) : (
-                  <span className="font-semibold">{opt.displayName}</span>
+                  <span className="font-medium text-slate-100">{opt.displayName}</span>
                 )}
 
                 {opt.hasChildren && !cleanQuery.includes(':') && (
@@ -163,8 +159,8 @@ export const TagSuggestPalette: React.FC<TagSuggestPaletteProps> = ({
                       e.stopPropagation();
                       handleSelectOption(`${opt.raw}:`);
                     }}
-                    className="ml-0.5 px-1 py-0.2 rounded text-[10px] bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-600"
-                    title={`子カテゴリを絞り込み`}
+                    className="ml-0.5 px-1 py-0.2 rounded text-[10px] bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-600/50"
+                    title="子カテゴリを絞り込み"
                   >
                     :子
                   </span>
@@ -173,7 +169,7 @@ export const TagSuggestPalette: React.FC<TagSuggestPaletteProps> = ({
             );
           })
         ) : (
-          <span className="text-[11px] text-slate-400 px-2 py-0.5 italic">
+          <span className="text-[11px] text-slate-400 px-2 py-0.5 italic font-sans">
             一致する候補がありません（そのまま自由に入力できます）
           </span>
         )}

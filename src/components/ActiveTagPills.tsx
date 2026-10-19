@@ -33,49 +33,38 @@ export const ActiveTagPills: React.FC<ActiveTagPillsProps> = ({
   const renderTagContent = (tag: InlineTagInfo) => {
     const isMultiPart = tag.parts.length > 1;
 
-    let icon = <Tag className="w-3 h-3 text-amber-400 flex-shrink-0" />;
+    let icon = <Tag className="w-3 h-3 text-amber-600 flex-shrink-0" />;
     if (tag.type === 'date') {
-      icon = <Calendar className="w-3 h-3 text-emerald-400 flex-shrink-0" />;
+      icon = <Calendar className="w-3 h-3 text-emerald-600 flex-shrink-0" />;
     } else if (tag.type === 'theme') {
-      icon = <Package className="w-3 h-3 text-blue-400 flex-shrink-0" />;
+      icon = <Package className="w-3 h-3 text-blue-600 flex-shrink-0" />;
     }
 
     return (
       <div className="flex items-center gap-1 min-w-0">
         {icon}
         {isMultiPart ? (
-          <div className="flex items-center gap-0.5 truncate">
+          <div className="flex items-center gap-0.5 truncate text-[11px]">
             {tag.parts.map((p, idx) => (
               <React.Fragment key={idx}>
-                {idx > 0 && <span className="text-[10px] opacity-60">›</span>}
-                <span className={idx === tag.parts.length - 1 ? 'font-semibold' : 'opacity-80'}>
+                {idx > 0 && <span className="text-[10px] text-slate-300">›</span>}
+                <span className={idx === tag.parts.length - 1 ? 'font-medium text-slate-700' : 'text-slate-400'}>
                   {p}
                 </span>
               </React.Fragment>
             ))}
           </div>
         ) : (
-          <span className="truncate font-semibold">{tag.value}</span>
+          <span className="truncate font-medium text-slate-700 text-[11px]">{tag.value}</span>
         )}
       </div>
     );
   };
 
-  const getPillColorClasses = (type: InlineTagInfo['type']) => {
-    switch (type) {
-      case 'date':
-        return 'bg-emerald-950/85 border-emerald-700/80 text-emerald-300 hover:bg-emerald-900/90';
-      case 'theme':
-        return 'bg-blue-950/85 border-blue-700/80 text-blue-300 hover:bg-blue-900/90';
-      case 'category':
-        return 'bg-amber-950/85 border-amber-700/80 text-amber-300 hover:bg-amber-900/90';
-    }
-  };
-
   return (
     <div
       onPointerDown={handlePointerDown}
-      className="bg-slate-900/95 border-b border-slate-700/80 px-2 py-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar select-none z-10"
+      className="bg-slate-100/95 border-b border-slate-200 px-2.5 py-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar select-none z-10"
       style={{ touchAction: 'manipulation' }}
     >
       <span className="text-[10px] text-slate-400 font-mono flex-shrink-0 select-none">
@@ -86,9 +75,7 @@ export const ActiveTagPills: React.FC<ActiveTagPillsProps> = ({
         {tags.map((tag, idx) => (
           <div
             key={`${tag.type}-${tag.startIndex}-${idx}`}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-mono shadow-xs transition-colors cursor-pointer flex-shrink-0 ${getPillColorClasses(
-              tag.type
-            )}`}
+            className="flex items-center gap-1 px-2 py-0.5 rounded bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 font-mono shadow-2xs transition-colors cursor-pointer flex-shrink-0"
             onClick={() => onClickTag?.(tag)}
             title="タップで変更、✕で削除"
           >
@@ -101,7 +88,7 @@ export const ActiveTagPills: React.FC<ActiveTagPillsProps> = ({
                 e.stopPropagation();
               }}
               onPointerUp={(e) => handleRemove(e, tag)}
-              className="ml-0.5 p-0.5 hover:bg-white/20 active:bg-white/30 rounded-full text-slate-300 hover:text-white transition-colors cursor-pointer"
+              className="ml-0.5 p-0.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 active:bg-slate-200 rounded transition-colors cursor-pointer"
               title="タグをワン操作で削除"
             >
               <X className="w-3 h-3" />
