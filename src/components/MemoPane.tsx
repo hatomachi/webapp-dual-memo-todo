@@ -725,7 +725,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
               ref={backdropRef}
               aria-hidden="true"
               style={{ right: `${scrollbarWidth}px` }}
-              className="notepad-layer absolute inset-y-0 left-0 overflow-hidden pointer-events-none select-none text-transparent pt-2.5 pb-16 pl-3 sm:pl-4 pr-3 sm:pr-4"
+              className="notepad-layer absolute inset-y-0 left-0 overflow-hidden pointer-events-none select-none text-slate-800 pt-2.5 pb-16 pl-3 sm:pl-4 pr-3 sm:pr-4"
             >
               {lines.map((line, idx) => {
                 const isHeader =
@@ -737,7 +737,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                   return (
                     <div
                       key={idx}
-                      className="notepad-line bg-slate-200/80 -mx-1 px-1 rounded-sm"
+                      className="notepad-line text-slate-700 bg-slate-200/80 -mx-1 px-1 rounded-sm"
                     >
                       {line || '\u200B'}
                     </div>
@@ -752,7 +752,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                   return (
                     <div
                       key={idx}
-                      className="notepad-line relative bg-slate-100/90 -mx-0.5 px-0.5 rounded-sm"
+                      className="notepad-line relative text-slate-500 bg-slate-100/90 -mx-0.5 px-0.5 rounded-sm"
                     >
                       <span
                         aria-hidden="true"
@@ -788,13 +788,13 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                       let chipClass = '';
                       if (token.tag.type === 'date') {
                         chipClass =
-                          'border-b-[1.5px] border-dotted border-emerald-600/70 pb-[1px]';
+                          'text-emerald-700 border-b-[1.5px] border-dotted border-emerald-600/70 pb-[1px]';
                       } else if (token.tag.type === 'theme') {
                         chipClass =
-                          'border-b-[1.5px] border-dotted border-blue-600/70 pb-[1px]';
+                          'text-blue-700 border-b-[1.5px] border-dotted border-blue-600/70 pb-[1px]';
                       } else if (token.tag.type === 'category') {
                         chipClass =
-                          'border-b-[1.5px] border-dotted border-amber-600/70 pb-[1px]';
+                          'text-amber-800 border-b-[1.5px] border-dotted border-amber-600/70 pb-[1px]';
                       }
 
                       return (
@@ -843,7 +843,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
               autoCapitalize="off"
               autoComplete="off"
               autoCorrect="off"
-              className="notepad-layer absolute inset-0 w-full h-full overflow-y-auto overflow-x-hidden pt-2.5 pb-16 pl-3 sm:pl-4 pr-3 sm:pr-4 text-slate-800 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-300"
+              className="notepad-layer absolute inset-0 w-full h-full overflow-y-auto overflow-x-hidden pt-2.5 pb-16 pl-3 sm:pl-4 pr-3 sm:pr-4 text-transparent caret-slate-800 selection:bg-blue-500/25 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-300"
             />
           </div>
         </div>

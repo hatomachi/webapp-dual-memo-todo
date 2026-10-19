@@ -42,6 +42,15 @@
   min-height: 20px;
 }
 
+textarea.notepad-layer {
+  caret-color: #1e293b;
+}
+
+textarea.notepad-layer::selection {
+  background: rgba(59, 130, 246, 0.25);
+  color: transparent;
+}
+
 /* Custom scrollbars */
 ::-webkit-scrollbar {
   width: 8px;
