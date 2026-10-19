@@ -17,6 +17,15 @@ import {
   getLineDueDateStatus,
   DUE_DATE_REGEX,
 } from '../utils/parser';
+import {
+  InlineTagInfo,
+  SuggestionTrigger,
+  parseLineInlineTags,
+  splitLineIntoTokens,
+  removeTagFromLine,
+  replaceTagInLine,
+  detectSuggestionTrigger,
+} from '../utils/tagHelper';
 import { SectionNav } from './SectionNav';
 
 export interface MemoPaneHandle {
@@ -28,6 +37,9 @@ export interface MemoPaneHandle {
   focus: () => void;
   getCursorLineAndCol: () => { lineIdx: number; col: number } | null;
   restoreCursorLineAndCol: (lineIdx: number, col: number) => void;
+  removeTagFromCurrentLine: (tag: InlineTagInfo) => void;
+  replaceTagInCurrentLine: (tag: InlineTagInfo, newRawTag: string) => void;
+  applySuggestionAtCursor: (suggestedValue: string, trigger: SuggestionTrigger) => void;
 }
 
 interface MemoPaneProps {
@@ -42,6 +54,8 @@ interface MemoPaneProps {
   onCommitChange: (paneType: PaneType) => void;
   onFocus: () => void;
   onBlur: () => void;
+  onActiveLineTagsChange?: (tags: InlineTagInfo[]) => void;
+  onSuggestionTrigger?: (trigger: SuggestionTrigger | null) => void;
 }
 
 const NAVIGATION_KEYS = new Set([
@@ -72,6 +86,8 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       onCommitChange,
       onFocus,
       onBlur,
+      onActiveLineTagsChange,
+      onSuggestionTrigger,
     },
     ref
   ) => {
@@ -142,7 +158,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       const handleTouchMove = (e: TouchEvent) => {
         if (e.touches.length !== 1) return;
         const currentY = e.touches[0].clientY;
-        const deltaY = currentY - touchStartY; // positive = swipe down (trying to pull top down)
+        const deltaY = currentY - touchStartY;
         const scrollTop = textarea.scrollTop;
         const maxScroll = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
 
@@ -199,7 +215,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       const lineBottom = lineTop + lineEl.offsetHeight;
       const viewTop = textarea.scrollTop;
       const viewBottom = viewTop + textarea.clientHeight;
-      const padding = 26; // 1+ line (20px) of breathing room above bottom toolbar
+      const padding = 26; // 1+ line of breathing room above bottom toolbar
 
       if (lineTop < viewTop + 8) {
         textarea.scrollTop = Math.max(0, lineTop - 8);
@@ -249,6 +265,28 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       return () => cancelAnimationFrame(raf);
     }, [isKeyboardOpen, ensureCaretVisible, syncBackdropScroll]);
 
+    // Update cursor information, detect tags in active line, and detect suggestion trigger
+    const updateCursorState = useCallback(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const caretPos = textarea.selectionEnd ?? 0;
+      const textVal = textarea.value;
+      const lineStart = textVal.lastIndexOf('\n', caretPos - 1) + 1;
+      const lineEndIdx = textVal.indexOf('\n', caretPos);
+      const lineEnd = lineEndIdx === -1 ? textVal.length : lineEndIdx;
+      const currentLine = textVal.substring(lineStart, lineEnd);
+      const col = caretPos - lineStart;
+
+      // 1. Tags in current line
+      const tags = parseLineInlineTags(currentLine);
+      onActiveLineTagsChange?.(tags);
+
+      // 2. Suggestion trigger at cursor
+      const trigger = detectSuggestionTrigger(currentLine, col);
+      onSuggestionTrigger?.(trigger);
+    }, [onActiveLineTagsChange, onSuggestionTrigger]);
+
     // Expose manipulation methods to parent (for QuickToolbar)
     useImperativeHandle(ref, () => ({
       insertText: (before: string, after = '') => {
@@ -269,6 +307,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
           textarea.setSelectionRange(targetCursor, targetCursor);
           syncBackdropScroll();
           ensureCaretVisible();
+          updateCursorState();
         });
       },
 
@@ -279,11 +318,9 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
         const start = textarea.selectionStart ?? text.length;
         const val = text;
 
-        // Find the end of the current line
         const lineEnd = val.indexOf('\n', start);
         const insertPos = lineEnd === -1 ? val.length : lineEnd;
 
-        // Insert newline and 2 half-width spaces for indent comment
         const prefix = val.substring(0, insertPos);
         const suffix = val.substring(insertPos);
         const newText = `${prefix}\n  ${suffix}`;
@@ -295,6 +332,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
           textarea.setSelectionRange(newCursorPos, newCursorPos);
           syncBackdropScroll();
           ensureCaretVisible();
+          updateCursorState();
         });
       },
 
@@ -305,36 +343,30 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
         const start = textarea.selectionStart ?? text.length;
         const val = text;
 
-        // Find the start and end of the current line
         const lineStart = val.lastIndexOf('\n', start - 1) + 1;
         const lineEndIdx = val.indexOf('\n', start);
         const lineEnd = lineEndIdx === -1 ? val.length : lineEndIdx;
         const currentLine = val.substring(lineStart, lineEnd);
 
-        // Check if caret is immediately after a '#' or '＃'
         const charBefore = start > 0 ? val[start - 1] : '';
         const isRightAfterHash = charBefore === '#' || charBefore === '＃';
 
-        // Check if current line already contains a due date tag (#MM/DD, etc.)
         const match = currentLine.match(DUE_DATE_REGEX);
 
         let newText: string;
         let newCursorPos: number;
 
         if (match && match.index !== undefined) {
-          // Replace existing due date in current line
           const matchStart = lineStart + match.index;
           const matchEnd = matchStart + match[0].length;
           const replacement = `#${dateStr}`;
           newText = val.substring(0, matchStart) + replacement + val.substring(matchEnd);
           newCursorPos = matchStart + replacement.length;
         } else if (isRightAfterHash) {
-          // Caret is directly after #, so replace '#' with '#MM/DD '
           const replacement = `#${dateStr} `;
           newText = val.substring(0, start - 1) + replacement + val.substring(start);
           newCursorPos = start - 1 + replacement.length;
         } else {
-          // Insert at caret position. Ensure leading space if preceded by non-space/non-newline
           const needsLeadingSpace =
             charBefore !== '' &&
             charBefore !== ' ' &&
@@ -352,6 +384,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
           textarea.setSelectionRange(newCursorPos, newCursorPos);
           syncBackdropScroll();
           ensureCaretVisible();
+          updateCursorState();
         });
       },
 
@@ -402,6 +435,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
             textarea.setSelectionRange(targetPos, targetPos);
             syncBackdropScroll();
             ensureCaretVisible();
+            updateCursorState();
             return;
           }
           currentOffset += lines[i].length + 1;
@@ -410,6 +444,93 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
         textarea.setSelectionRange(endPos, endPos);
         syncBackdropScroll();
         ensureCaretVisible();
+        updateCursorState();
+      },
+
+      removeTagFromCurrentLine: (tag: InlineTagInfo) => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+
+        const caretPos = textarea.selectionEnd ?? text.length;
+        const val = text;
+        const lineStart = val.lastIndexOf('\n', caretPos - 1) + 1;
+        const lineEndIdx = val.indexOf('\n', caretPos);
+        const lineEnd = lineEndIdx === -1 ? val.length : lineEndIdx;
+        const currentLine = val.substring(lineStart, lineEnd);
+
+        const newLine = removeTagFromLine(currentLine, tag);
+        const newText = val.substring(0, lineStart) + newLine + val.substring(lineEnd);
+        onChangeText(newText);
+
+        const newCaret = Math.min(lineStart + newLine.length, caretPos);
+        requestAnimationFrame(() => {
+          textarea.focus({ preventScroll: true });
+          textarea.setSelectionRange(newCaret, newCaret);
+          syncBackdropScroll();
+          ensureCaretVisible();
+          updateCursorState();
+        });
+      },
+
+      replaceTagInCurrentLine: (tag: InlineTagInfo, newRawTag: string) => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+
+        const caretPos = textarea.selectionEnd ?? text.length;
+        const val = text;
+        const lineStart = val.lastIndexOf('\n', caretPos - 1) + 1;
+        const lineEndIdx = val.indexOf('\n', caretPos);
+        const lineEnd = lineEndIdx === -1 ? val.length : lineEndIdx;
+        const currentLine = val.substring(lineStart, lineEnd);
+
+        const newLine = replaceTagInLine(currentLine, tag, newRawTag);
+        const newText = val.substring(0, lineStart) + newLine + val.substring(lineEnd);
+        onChangeText(newText);
+
+        const newCaret = lineStart + tag.startIndex + newRawTag.length;
+        requestAnimationFrame(() => {
+          textarea.focus({ preventScroll: true });
+          textarea.setSelectionRange(newCaret, newCaret);
+          syncBackdropScroll();
+          ensureCaretVisible();
+          updateCursorState();
+        });
+      },
+
+      applySuggestionAtCursor: (suggestedValue: string, trigger: SuggestionTrigger) => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+
+        const caretPos = textarea.selectionEnd ?? text.length;
+        const val = text;
+        const lineStart = val.lastIndexOf('\n', caretPos - 1) + 1;
+
+        const replaceStartGlobal = lineStart + trigger.replaceStart;
+        const replaceEndGlobal = lineStart + trigger.replaceEnd;
+
+        let replacement = '';
+        if (trigger.type === 'category') {
+          const isDrillDown = suggestedValue.endsWith(':');
+          replacement = `!${suggestedValue}${isDrillDown ? '' : ' '}`;
+        } else {
+          const isDrillDown = suggestedValue.endsWith(':');
+          replacement = `[${suggestedValue}${isDrillDown ? '' : '] '}`;
+        }
+
+        const newText =
+          val.substring(0, replaceStartGlobal) +
+          replacement +
+          val.substring(replaceEndGlobal);
+        onChangeText(newText);
+
+        const targetCursor = replaceStartGlobal + replacement.length;
+        requestAnimationFrame(() => {
+          textarea.focus({ preventScroll: true });
+          textarea.setSelectionRange(targetCursor, targetCursor);
+          syncBackdropScroll();
+          ensureCaretVisible();
+          updateCursorState();
+        });
       },
     }));
 
@@ -467,6 +588,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                 lineStart,
                 start - 2
               );
+              updateCursorState();
             });
           } else if (
             val.substring(lineStart, lineStart + 1) === '　' ||
@@ -479,6 +601,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                 lineStart,
                 start - 1
               );
+              updateCursorState();
             });
           }
         } else {
@@ -487,6 +610,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
           onChangeText(updated);
           requestAnimationFrame(() => {
             textarea.selectionStart = textarea.selectionEnd = start + 2;
+            updateCursorState();
           });
         }
       }
@@ -496,11 +620,13 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       if (NAVIGATION_KEYS.has(e.key)) {
         ensureCaretVisible();
       }
+      updateCursorState();
     };
 
     const handleFocus = () => {
       requestAnimationFrame(() => {
         ensureCaretVisible();
+        updateCursorState();
       });
       onFocus();
     };
@@ -641,32 +767,42 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                   );
                 }
 
+                // Task Line: highlight today / overdue, plus inline chip tokens
                 const dateStatus = getLineDueDateStatus(line);
+                let lineBgClass = '';
                 if (dateStatus === 'overdue') {
-                  return (
-                    <div
-                      key={idx}
-                      className="notepad-line bg-rose-100/90 -mx-1 px-1 rounded-sm"
-                    >
-                      {line || '\u200B'}
-                    </div>
-                  );
+                  lineBgClass = 'bg-rose-100/90 -mx-1 px-1 rounded-sm';
+                } else if (dateStatus === 'today') {
+                  lineBgClass = 'bg-amber-100/90 -mx-1 px-1 rounded-sm';
                 }
 
-                if (dateStatus === 'today') {
-                  return (
-                    <div
-                      key={idx}
-                      className="notepad-line bg-amber-100/90 -mx-1 px-1 rounded-sm"
-                    >
-                      {line || '\u200B'}
-                    </div>
-                  );
-                }
+                const tokens = splitLineIntoTokens(line);
 
                 return (
-                  <div key={idx} className="notepad-line">
-                    {line || '\u200B'}
+                  <div key={idx} className={`notepad-line ${lineBgClass}`}>
+                    {tokens.map((token, tIdx) => {
+                      if (!token.tag) {
+                        return <React.Fragment key={tIdx}>{token.text}</React.Fragment>;
+                      }
+
+                      let chipClass = '';
+                      if (token.tag.type === 'date') {
+                        chipClass =
+                          'bg-emerald-200/70 rounded px-0 py-0.5 ring-1 ring-emerald-500/60';
+                      } else if (token.tag.type === 'theme') {
+                        chipClass =
+                          'bg-blue-200/70 rounded px-0 py-0.5 ring-1 ring-blue-500/60';
+                      } else if (token.tag.type === 'category') {
+                        chipClass =
+                          'bg-amber-200/70 rounded px-0 py-0.5 ring-1 ring-amber-500/60';
+                      }
+
+                      return (
+                        <span key={tIdx} className={chipClass}>
+                          {token.text}
+                        </span>
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -681,12 +817,25 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                 requestAnimationFrame(() => {
                   syncBackdropScroll();
                   ensureCaretVisible();
+                  updateCursorState();
                 });
               }}
               onScroll={syncBackdropScroll}
-              onClick={() => requestAnimationFrame(() => ensureCaretVisible())}
+              onClick={() => {
+                requestAnimationFrame(() => {
+                  ensureCaretVisible();
+                  updateCursorState();
+                });
+              }}
               onFocus={handleFocus}
-              onBlur={onBlur}
+              onBlur={() => {
+                onBlur();
+                // Delay clearing active tags/suggestions so click on toolbar buttons can register
+                setTimeout(() => {
+                  onActiveLineTagsChange?.([]);
+                  onSuggestionTrigger?.(null);
+                }, 200);
+              }}
               onKeyDown={handleKeyDown}
               onKeyUp={handleKeyUp}
               placeholder={placeholder}
@@ -704,4 +853,3 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
 );
 
 MemoPane.displayName = 'MemoPane';
-

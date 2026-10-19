@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { PaneType, TaskItem } from './types/todo';
 import {
   parseCategoryText,
@@ -9,6 +9,11 @@ import {
   extractCategorySections,
   extractThemeSections,
 } from './utils/parser';
+import {
+  InlineTagInfo,
+  SuggestionTrigger,
+  extractHierarchicalOptions,
+} from './utils/tagHelper';
 import { INITIAL_CATEGORY_TEXT } from './data/sampleData';
 import { Header } from './components/Header';
 import { MemoPane, MemoPaneHandle } from './components/MemoPane';
@@ -56,6 +61,10 @@ export const App: React.FC = () => {
     dirtyPaneRef.current = pane;
     setDirtyPane(pane);
   };
+
+  // Active line tags and suggestion trigger state
+  const [activeLineTags, setActiveLineTags] = useState<InlineTagInfo[]>([]);
+  const [suggestionTrigger, setSuggestionTrigger] = useState<SuggestionTrigger | null>(null);
 
   // Modals state
   const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false);
@@ -111,6 +120,23 @@ export const App: React.FC = () => {
     tasksRef.current = val;
     setTasks(val);
   };
+
+  // Memoized hierarchical options for suggestions
+  const categoryOptions = useMemo(() => {
+    const all = [...categoriesRef.current];
+    tasksRef.current.forEach((t) => {
+      if (t.category) all.push(t.category);
+    });
+    return extractHierarchicalOptions(all, 'inbox');
+  }, [categoryText, themeText]);
+
+  const themeOptions = useMemo(() => {
+    const all = [...themesRef.current];
+    tasksRef.current.forEach((t) => {
+      if (t.theme) all.push(t.theme);
+    });
+    return extractHierarchicalOptions(all, 'Uncategorized');
+  }, [categoryText, themeText]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -736,6 +762,8 @@ export const App: React.FC = () => {
               onCommitChange={handleCommitChange}
               onFocus={() => setFocusedPane('category')}
               onBlur={() => setFocusedPane(null)}
+              onActiveLineTagsChange={(tags) => setActiveLineTags(tags)}
+              onSuggestionTrigger={(trig) => setSuggestionTrigger(trig)}
             />
           </div>
 
@@ -761,6 +789,8 @@ export const App: React.FC = () => {
               onCommitChange={handleCommitChange}
               onFocus={() => setFocusedPane('theme')}
               onBlur={() => setFocusedPane(null)}
+              onActiveLineTagsChange={(tags) => setActiveLineTags(tags)}
+              onSuggestionTrigger={(trig) => setSuggestionTrigger(trig)}
             />
           </div>
         </div>
@@ -796,6 +826,33 @@ export const App: React.FC = () => {
         onToggleSectionNav={handleQuickToggleNav}
         isDirty={dirtyPane !== null}
         isKeyboardOpen={viewport.isKeyboardOpen}
+        activeLineTags={activeLineTags}
+        onRemoveActiveTag={(tag) => {
+          getActivePaneHandle()?.removeTagFromCurrentLine(tag);
+        }}
+        onClickActiveTag={(tag) => {
+          if (tag.type === 'category' || tag.type === 'theme') {
+            setSuggestionTrigger({
+              type: tag.type,
+              query: tag.parts.length > 1 ? `${tag.parts[0]}:` : tag.value,
+              triggerChar: tag.type === 'category' ? '!' : '[',
+              replaceStart: tag.startIndex,
+              replaceEnd: tag.endIndex,
+            });
+          }
+        }}
+        suggestionTrigger={suggestionTrigger}
+        categoryOptions={categoryOptions}
+        themeOptions={themeOptions}
+        onSelectSuggestion={(val) => {
+          if (suggestionTrigger) {
+            getActivePaneHandle()?.applySuggestionAtCursor(val, suggestionTrigger);
+            if (!val.endsWith(':')) {
+              setSuggestionTrigger(null);
+            }
+          }
+        }}
+        onCloseSuggestion={() => setSuggestionTrigger(null)}
       />
 
       {/* Modals */}

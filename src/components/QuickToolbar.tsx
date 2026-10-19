@@ -11,7 +11,10 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { PaneType } from '../types/todo';
+import { InlineTagInfo, SuggestionTrigger, HierarchicalOption } from '../utils/tagHelper';
 import { QuickDatePalette } from './QuickDatePalette';
+import { ActiveTagPills } from './ActiveTagPills';
+import { TagSuggestPalette } from './TagSuggestPalette';
 
 interface QuickToolbarProps {
   activePane: PaneType;
@@ -29,6 +32,15 @@ interface QuickToolbarProps {
   onToggleSectionNav: () => void;
   isDirty: boolean;
   isKeyboardOpen?: boolean;
+  // Inline tag pills & suggestion palette props
+  activeLineTags?: InlineTagInfo[];
+  onRemoveActiveTag?: (tag: InlineTagInfo) => void;
+  onClickActiveTag?: (tag: InlineTagInfo) => void;
+  suggestionTrigger?: SuggestionTrigger | null;
+  categoryOptions?: HierarchicalOption[];
+  themeOptions?: HierarchicalOption[];
+  onSelectSuggestion?: (val: string) => void;
+  onCloseSuggestion?: () => void;
 }
 
 interface ToolbarButtonProps {
@@ -54,8 +66,6 @@ const ToolbarButton: React.FC<ToolbarButtonProps> = ({
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (disabled || e.button !== 0) return;
-    // Crucial: Prevent browser from shifting focus away from textarea,
-    // which would cause iOS Safari to dismiss the virtual keyboard.
     e.preventDefault();
     isPointerDownRef.current = true;
   };
@@ -121,12 +131,40 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
   onToggleSectionNav,
   isDirty,
   isKeyboardOpen = false,
+  activeLineTags = [],
+  onRemoveActiveTag,
+  onClickActiveTag,
+  suggestionTrigger = null,
+  categoryOptions = [],
+  themeOptions = [],
+  onSelectSuggestion,
+  onCloseSuggestion,
 }) => {
   const [isDatePaletteOpen, setIsDatePaletteOpen] = useState(false);
 
+  const handleTagClick = (tag: InlineTagInfo) => {
+    if (tag.type === 'date') {
+      setIsDatePaletteOpen((prev) => !prev);
+    } else {
+      onClickActiveTag?.(tag);
+    }
+  };
+
   return (
     <div className="flex flex-col flex-shrink-0 z-20">
-      {/* Quick Date Palette (slides over just above the toolbar) */}
+      {/* 1. Tag Suggestion Palette (triggered by '!' or '[' at cursor) */}
+      {suggestionTrigger && onSelectSuggestion && onCloseSuggestion && (
+        <TagSuggestPalette
+          isOpen={true}
+          type={suggestionTrigger.type}
+          query={suggestionTrigger.query}
+          options={suggestionTrigger.type === 'category' ? categoryOptions : themeOptions}
+          onSelect={onSelectSuggestion}
+          onClose={onCloseSuggestion}
+        />
+      )}
+
+      {/* 2. Quick Date Palette (slides over just above the toolbar on '#' click) */}
       <QuickDatePalette
         isOpen={isDatePaletteOpen}
         onSelectDate={(dateStr) => {
@@ -144,7 +182,16 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
         onClose={() => setIsDatePaletteOpen(false)}
       />
 
-      {/* Main Toolbar */}
+      {/* 3. Active Line Tag Pills (shows tags in current cursor line with 1-tap delete) */}
+      {!suggestionTrigger && activeLineTags.length > 0 && onRemoveActiveTag && (
+        <ActiveTagPills
+          tags={activeLineTags}
+          onRemoveTag={onRemoveActiveTag}
+          onClickTag={handleTagClick}
+        />
+      )}
+
+      {/* 4. Main Toolbar */}
       <div
         className="bg-slate-800 text-slate-200 border-t border-slate-700 px-2 pt-1.5 flex items-center justify-between gap-1 select-none shadow-lg flex-shrink-0"
         style={{
@@ -199,80 +246,80 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
             <Hash className="w-3.5 h-3.5" />
           </ToolbarButton>
 
-        {/* Theme brackets */}
-        <ToolbarButton
-          onTrigger={() => onInsertText('[', ']')}
-          className="flex items-center justify-center px-2 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs font-mono font-bold text-blue-400 transition-colors min-w-[32px] cursor-pointer"
-          title="テーマタグ ([テーマ名])"
-        >
-          <Brackets className="w-3.5 h-3.5" />
-        </ToolbarButton>
+          {/* Theme brackets */}
+          <ToolbarButton
+            onTrigger={() => onInsertText('[', ']')}
+            className="flex items-center justify-center px-2 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs font-mono font-bold text-blue-400 transition-colors min-w-[32px] cursor-pointer"
+            title="テーマタグ ([テーマ名])"
+          >
+            <Brackets className="w-3.5 h-3.5" />
+          </ToolbarButton>
 
-        {/* Category exclamation */}
-        <ToolbarButton
-          onTrigger={() => onInsertText('!')}
-          className="flex items-center justify-center px-2 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs font-mono font-bold text-amber-400 transition-colors min-w-[32px] cursor-pointer"
-          title="分類ヘッダー (!分類名)"
-        >
-          <AlertCircle className="w-3.5 h-3.5" />
-        </ToolbarButton>
+          {/* Category exclamation */}
+          <ToolbarButton
+            onTrigger={() => onInsertText('!')}
+            className="flex items-center justify-center px-2 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs font-mono font-bold text-amber-400 transition-colors min-w-[32px] cursor-pointer"
+            title="分類ヘッダー / タグ (!分類名)"
+          >
+            <AlertCircle className="w-3.5 h-3.5" />
+          </ToolbarButton>
 
-        {/* Section Table of Contents drawer toggle */}
-        <ToolbarButton
-          onTrigger={onToggleSectionNav}
-          className="flex items-center gap-1 px-2 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs text-slate-200 transition-colors whitespace-nowrap cursor-pointer"
-          title="区切り目次を開閉"
-        >
-          <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
-          <span className="text-[11px]">目次</span>
-        </ToolbarButton>
+          {/* Section Table of Contents drawer toggle */}
+          <ToolbarButton
+            onTrigger={onToggleSectionNav}
+            className="flex items-center gap-1 px-2 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs text-slate-200 transition-colors whitespace-nowrap cursor-pointer"
+            title="区切り目次を開閉"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="text-[11px]">目次</span>
+          </ToolbarButton>
 
-        {/* Due date sort button */}
-        <ToolbarButton
-          onTrigger={onSortDueDates}
-          className="flex items-center gap-1 px-2 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs text-slate-200 transition-colors whitespace-nowrap cursor-pointer"
-          title="期日昇順で並び替え"
-        >
-          <ArrowUpDown className="w-3.5 h-3.5 text-amber-400" />
-          <span className="text-[11px]">ソート</span>
-        </ToolbarButton>
+          {/* Due date sort button */}
+          <ToolbarButton
+            onTrigger={onSortDueDates}
+            className="flex items-center gap-1 px-2 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs text-slate-200 transition-colors whitespace-nowrap cursor-pointer"
+            title="期日昇順で並び替え"
+          >
+            <ArrowUpDown className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-[11px]">ソート</span>
+          </ToolbarButton>
+        </div>
+
+        {/* Undo / Redo & Save commit */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <ToolbarButton
+            onTrigger={onUndo}
+            disabled={!canUndo}
+            className="p-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-30 disabled:hover:bg-slate-700 rounded text-slate-200 transition-colors cursor-pointer"
+            title="元に戻す (Undo)"
+          >
+            <Undo2 className="w-4 h-4" />
+          </ToolbarButton>
+
+          <ToolbarButton
+            onTrigger={onRedo}
+            disabled={!canRedo}
+            className="p-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-30 disabled:hover:bg-slate-700 rounded text-slate-200 transition-colors cursor-pointer"
+            title="やり直す (Redo)"
+          >
+            <Redo2 className="w-4 h-4" />
+          </ToolbarButton>
+
+          {/* Commit/Save button */}
+          <ToolbarButton
+            onTrigger={onCommit}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition-all shadow-sm cursor-pointer ${
+              isDirty
+                ? 'bg-blue-600 hover:bg-blue-500 text-white animate-pulse'
+                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+            }`}
+            title="左右反映 & 保存"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>反映</span>
+          </ToolbarButton>
+        </div>
       </div>
-
-      {/* Undo / Redo & Save commit */}
-      <div className="flex items-center gap-1.5 flex-shrink-0">
-        <ToolbarButton
-          onTrigger={onUndo}
-          disabled={!canUndo}
-          className="p-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-30 disabled:hover:bg-slate-700 rounded text-slate-200 transition-colors cursor-pointer"
-          title="元に戻す (Undo)"
-        >
-          <Undo2 className="w-4 h-4" />
-        </ToolbarButton>
-
-        <ToolbarButton
-          onTrigger={onRedo}
-          disabled={!canRedo}
-          className="p-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-30 disabled:hover:bg-slate-700 rounded text-slate-200 transition-colors cursor-pointer"
-          title="やり直す (Redo)"
-        >
-          <Redo2 className="w-4 h-4" />
-        </ToolbarButton>
-
-        {/* Commit/Save button */}
-        <ToolbarButton
-          onTrigger={onCommit}
-          className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition-all shadow-sm cursor-pointer ${
-            isDirty
-              ? 'bg-blue-600 hover:bg-blue-500 text-white animate-pulse'
-              : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-          }`}
-          title="左右反映 & 保存"
-        >
-          <Save className="w-3.5 h-3.5" />
-          <span>反映</span>
-        </ToolbarButton>
-      </div>
-    </div>
     </div>
   );
 };
