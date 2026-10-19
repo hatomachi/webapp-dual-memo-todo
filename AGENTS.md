@@ -4,7 +4,8 @@
 
 > [!IMPORTANT]
 > **🎯 プロダクト作戦ノート & Next Actions (personal-vault)**:  
-> 本プロダクトの全体ビジョン、現在地、ユーザーからの日常フィードバック、直近の Next Actions は [webapp-dual-memo-todo.md](file:///Users/s-ikari/work/personal-vault/10_%E8%81%B7%E4%BA%BA%E3%83%BB%E7%99%BA%E6%98%8E%E5%AE%B6/webapp-dual-memo-todo.md) に一元管理されています。実装着手・機能完了時は必ず確認・更新してください。
+> 本プロダクトの全体ビジョン、現在地、ユーザーからの日常フィードバック、直近の Next Actions は [webapp-dual-memo-todo.md](file:///Users/s-ikari/work/personal-vault/10_%E8%81%B7%E4%BA%BA%E3%83%BB%E7%99%BA%E6%98%8E%E5%AE%B6/webapp-dual-memo-todo.md) に一元管理されています。実装着手・機能完了時は必ず確認・更新してください。  
+> 💾 **同期先データ実体（Private Repo）**: [/Users/s-ikari/work/dual-memo-data](file:///Users/s-ikari/work/dual-memo-data) (`todo-data.json`) ―― UI構造やデータ連動仕様の詳細は同リポジトリの [README.md](file:///Users/s-ikari/work/dual-memo-data/README.md) を参照。
 
 ---
 
