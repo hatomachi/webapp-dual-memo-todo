@@ -24,6 +24,8 @@ import { GitHubSettings, SyncStatus, RemotePayload } from './types/github';
 import {
   loadGitHubSettings,
   persistGitHubSettings,
+  loadLastSyncedAt,
+  persistLastSyncedAt,
   fetchFromGitHub,
   pushToGitHub,
 } from './utils/githubSync';
@@ -39,6 +41,12 @@ export const App: React.FC = () => {
   const [activeMobilePane, setActiveMobilePane] = useState<PaneType>('category');
   const [focusedPane, setFocusedPane] = useState<PaneType | null>(null);
   const [dirtyPane, setDirtyPane] = useState<PaneType | null>(null);
+  const dirtyPaneRef = useRef<PaneType | null>(null);
+
+  const updateDirtyPane = (pane: PaneType | null) => {
+    dirtyPaneRef.current = pane;
+    setDirtyPane(pane);
+  };
 
   // Modals state
   const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false);
@@ -55,7 +63,7 @@ export const App: React.FC = () => {
   // GitHub Settings & Sync state
   const [gitHubSettings, setGitHubSettings] = useState<GitHubSettings | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
-  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(loadLastSyncedAt());
   const [syncErrorMessage, setSyncErrorMessage] = useState<string | undefined>(undefined);
 
   // Refs to always hold the exact latest text without closure staleness
@@ -103,6 +111,69 @@ export const App: React.FC = () => {
     []
   );
 
+  // SWR: Fetch remote latest and update if user hasn't made dirty local edits
+  const syncWithRemote = useCallback(
+    async (silent = false) => {
+      const settings = loadGitHubSettings();
+      if (!settings || !settings.token || !settings.owner || !settings.repo) {
+        return;
+      }
+      // If user is currently editing (dirty), do not overwrite!
+      if (dirtyPaneRef.current !== null) {
+        return;
+      }
+
+      if (!silent) {
+        setSyncStatus('syncing');
+      }
+      try {
+        const { payload } = await fetchFromGitHub(settings);
+        if (!payload || !payload.categoryText) return;
+
+        // If current text is already identical to remote, just mark success
+        if (
+          categoryTextRef.current === payload.categoryText &&
+          themeTextRef.current === payload.themeText
+        ) {
+          setSyncStatus('success');
+          const now = Date.now();
+          setLastSyncedAt(now);
+          persistLastSyncedAt(now);
+          return;
+        }
+
+        // Only apply if user is still not dirty
+        if (dirtyPaneRef.current === null) {
+          const newCat = payload.categoryText;
+          const newThm = payload.themeText || '';
+          const newT =
+            Array.isArray(payload.tasks) && payload.tasks.length > 0
+              ? payload.tasks
+              : parseCategoryText(newCat);
+
+          updateTasks(newT);
+          updateCategoryText(newCat);
+          updateThemeText(newThm);
+          saveToStorage(newT, newCat, newThm);
+          setSyncStatus('success');
+          const now = Date.now();
+          setLastSyncedAt(now);
+          persistLastSyncedAt(now);
+          if (!silent) {
+            showToast('☁️ リモートの最新データを取り込みました');
+          }
+        }
+      } catch (err: any) {
+        if (!silent) {
+          console.warn('Sync with remote failed:', err);
+          setSyncStatus('error');
+          setSyncErrorMessage(err.message || 'GitHub同期エラー');
+        }
+      }
+    },
+    [saveToStorage]
+  );
+
   // Background GitHub push helper
   const triggerBackgroundGitHubPush = useCallback(
     async (tasks: TaskItem[], catText: string, thmText: string, label: string) => {
@@ -126,7 +197,9 @@ export const App: React.FC = () => {
         };
         await pushToGitHub(settings, payload, `chore: update memo (${label})`);
         setSyncStatus('success');
-        setLastSyncedAt(Date.now());
+        const now = Date.now();
+        setLastSyncedAt(now);
+        persistLastSyncedAt(now);
       } catch (err: any) {
         console.error('Background GitHub push failed:', err);
         setSyncStatus('error');
@@ -180,7 +253,30 @@ export const App: React.FC = () => {
     } else {
       setHistoryState(loadedHist);
     }
-  }, []);
+
+    // Initial background sync with remote
+    syncWithRemote(true);
+  }, [syncWithRemote]);
+
+  // SWR: auto-sync on window focus or visibility change (when user returns to app)
+  useEffect(() => {
+    const onFocus = () => {
+      syncWithRemote(true);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        syncWithRemote(true);
+      }
+    };
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [syncWithRemote]);
 
   // Sync from sourcePane to opposite pane (Ctrl+S / Sync button)
   const handleCommitChange = useCallback(
@@ -210,7 +306,7 @@ export const App: React.FC = () => {
         showToast('💾 右 ➔ 左へ反映しました');
       }
 
-      setDirtyPane(null);
+      updateDirtyPane(null);
 
       // Record snapshot to 30-generation history
       setHistoryState((prev) => addSnapshot(prev, label, newCat, newThm));
@@ -239,7 +335,7 @@ export const App: React.FC = () => {
     updateCategoryText(newCatText);
     updateThemeText(newThmText);
     saveToStorage(sorted, newCatText, newThmText);
-    setDirtyPane(null);
+    updateDirtyPane(null);
 
     const label = '期日ソート';
     showToast('⚡️ 各区切りを期日順にソートしました');
@@ -266,7 +362,7 @@ export const App: React.FC = () => {
     updateCategoryText(targetSnap.categoryText);
     updateThemeText(targetSnap.themeText);
     saveToStorage(parsedTasks, targetSnap.categoryText, targetSnap.themeText);
-    setDirtyPane(null);
+    updateDirtyPane(null);
 
     const newState: HistoryState = {
       ...historyState,
@@ -290,7 +386,7 @@ export const App: React.FC = () => {
     updateCategoryText(targetSnap.categoryText);
     updateThemeText(targetSnap.themeText);
     saveToStorage(parsedTasks, targetSnap.categoryText, targetSnap.themeText);
-    setDirtyPane(null);
+    updateDirtyPane(null);
 
     const newState: HistoryState = {
       ...historyState,
@@ -313,7 +409,7 @@ export const App: React.FC = () => {
       updateCategoryText(snap.categoryText);
       updateThemeText(snap.themeText);
       saveToStorage(parsedTasks, snap.categoryText, snap.themeText);
-      setDirtyPane(null);
+      updateDirtyPane(null);
 
       const newState: HistoryState = {
         ...historyState,
@@ -349,10 +445,12 @@ export const App: React.FC = () => {
       updateCategoryText(newCat);
       updateThemeText(newThm);
       saveToStorage(newT, newCat, newThm);
-      setDirtyPane(null);
+      updateDirtyPane(null);
 
       setSyncStatus('success');
-      setLastSyncedAt(Date.now());
+      const now = Date.now();
+      setLastSyncedAt(now);
+      persistLastSyncedAt(now);
 
       const label = 'GitHubから取得 (Pull)';
       setHistoryState((prev) => addSnapshot(prev, label, newCat, newThm));
@@ -388,7 +486,9 @@ export const App: React.FC = () => {
 
       await pushToGitHub(settings, payload, 'chore: manual push from Dual Memo PWA');
       setSyncStatus('success');
-      setLastSyncedAt(Date.now());
+      const now = Date.now();
+      setLastSyncedAt(now);
+      persistLastSyncedAt(now);
       showToast('☁️ GitHubへバックアップ保存しました');
     } catch (err: any) {
       setSyncStatus('error');
@@ -477,7 +577,7 @@ export const App: React.FC = () => {
               isDirty={dirtyPane === 'category'}
               onChangeText={(newText) => {
                 updateCategoryText(newText);
-                setDirtyPane('category');
+                updateDirtyPane('category');
               }}
               onCommitChange={handleCommitChange}
               onFocus={() => setFocusedPane('category')}
@@ -501,7 +601,7 @@ export const App: React.FC = () => {
               isDirty={dirtyPane === 'theme'}
               onChangeText={(newText) => {
                 updateThemeText(newText);
-                setDirtyPane('theme');
+                updateDirtyPane('theme');
               }}
               onCommitChange={handleCommitChange}
               onFocus={() => setFocusedPane('theme')}
