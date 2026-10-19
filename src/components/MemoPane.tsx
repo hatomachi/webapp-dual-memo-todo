@@ -1,7 +1,6 @@
-import React, { useRef, useState } from 'react';
-import { PaneType, TaskItem } from '../types/todo';
-import { TaskPreview } from './TaskPreview';
-import { Edit3, Eye, Info } from 'lucide-react';
+import React, { useRef, useEffect } from 'react';
+import { PaneType } from '../types/todo';
+import { isCategoryHeader, isThemeHeader, isCommentLine } from '../utils/parser';
 
 interface MemoPaneProps {
   type: PaneType;
@@ -9,11 +8,9 @@ interface MemoPaneProps {
   subTitle: string;
   placeholder: string;
   text: string;
-  tasks: TaskItem[];
+  isDirty: boolean;
   onChangeText: (newText: string) => void;
   onCommitChange: (paneType: PaneType) => void;
-  onDeleteTask: (taskId: string) => void;
-  isFocused: boolean;
   onFocus: () => void;
   onBlur: () => void;
 }
@@ -24,18 +21,36 @@ export const MemoPane: React.FC<MemoPaneProps> = ({
   subTitle,
   placeholder,
   text,
-  tasks,
+  isDirty,
   onChangeText,
   onCommitChange,
-  onDeleteTask,
   onFocus,
   onBlur,
 }) => {
-  const [viewMode, setViewMode] = useState<'editor' | 'preview'>('editor');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
 
-  // Tab key indent handler
+  // Sync scroll position between textarea and highlight backdrop
+  const syncScroll = () => {
+    if (textareaRef.current && backdropRef.current) {
+      backdropRef.current.scrollTop = textareaRef.current.scrollTop;
+      backdropRef.current.scrollLeft = textareaRef.current.scrollLeft;
+    }
+  };
+
+  useEffect(() => {
+    syncScroll();
+  }, [text]);
+
+  // Handle Tab indentation and Ctrl+S / Cmd+S sync
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      e.stopPropagation();
+      onCommitChange(type);
+      return;
+    }
+
     if (e.key === 'Tab') {
       e.preventDefault();
       const textarea = textareaRef.current;
@@ -46,132 +61,142 @@ export const MemoPane: React.FC<MemoPaneProps> = ({
       const val = textarea.value;
 
       if (e.shiftKey) {
-        // Shift+Tab: Unindent
-        // If current line starts with two spaces, remove them
+        // Shift+Tab: remove leading spaces or full-width space on current line
         const lineStart = val.lastIndexOf('\n', start - 1) + 1;
         if (val.substring(lineStart, lineStart + 2) === '  ') {
           const updated = val.substring(0, lineStart) + val.substring(lineStart + 2);
           onChangeText(updated);
-          setTimeout(() => {
+          requestAnimationFrame(() => {
             textarea.selectionStart = textarea.selectionEnd = Math.max(lineStart, start - 2);
-          }, 0);
+          });
+        } else if (val.substring(lineStart, lineStart + 1) === '　' || val.substring(lineStart, lineStart + 1) === ' ') {
+          const updated = val.substring(0, lineStart) + val.substring(lineStart + 1);
+          onChangeText(updated);
+          requestAnimationFrame(() => {
+            textarea.selectionStart = textarea.selectionEnd = Math.max(lineStart, start - 1);
+          });
         }
       } else {
-        // Tab: Insert 2 spaces
+        // Tab: insert 2 half-width spaces
         const updated = val.substring(0, start) + '  ' + val.substring(end);
         onChangeText(updated);
-        setTimeout(() => {
+        requestAnimationFrame(() => {
           textarea.selectionStart = textarea.selectionEnd = start + 2;
-        }, 0);
+        });
       }
-    } else if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-      e.preventDefault();
-      onCommitChange(type);
     }
   };
 
-  // Filter tasks belonging to current pane logic count
-  const taskCount = tasks.length;
-  const sectionCount = new Set(
-    tasks.map((t) => (type === 'category' ? t.category || 'inbox' : t.theme || 'Uncategorized'))
-  ).size;
+  const lines = text.split('\n');
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-      {/* Pane Top Bar */}
-      <div className="flex items-center justify-between px-4 py-3 bg-slate-50/90 border-b border-slate-200 backdrop-blur-sm select-none">
-        <div>
-          <div className="flex items-center space-x-2">
-            <span
-              className={`w-2.5 h-2.5 rounded-full ${
-                type === 'category' ? 'bg-emerald-500' : 'bg-blue-500'
-              }`}
-            />
-            <h2 className="text-sm font-bold text-slate-800 tracking-tight">{title}</h2>
-            <span className="text-xs bg-slate-200 text-slate-700 font-mono font-medium px-2 py-0.5 rounded-full">
-              {taskCount} 件 / {sectionCount} セクション
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 mt-0.5">{subTitle}</p>
+    <div className="flex flex-col h-full bg-white rounded-lg shadow-sm border border-slate-300 overflow-hidden">
+      {/* Simple Notepad Header Bar */}
+      <div className="flex items-center justify-between px-3.5 py-2 bg-slate-100 border-b border-slate-200 select-none">
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className={`w-2 h-2 rounded-full flex-shrink-0 ${
+              type === 'category' ? 'bg-emerald-500' : 'bg-blue-500'
+            }`}
+          />
+          <h2 className="text-xs font-bold text-slate-700 truncate">{title}</h2>
+          <span className="text-[11px] text-slate-400 hidden md:inline truncate">
+            — {subTitle}
+          </span>
         </div>
 
-        {/* View Mode Toggle */}
-        <div className="flex items-center bg-slate-200/80 p-0.5 rounded-lg text-xs font-medium">
-          <button
-            onClick={() => setViewMode('editor')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all ${
-              viewMode === 'editor'
-                ? 'bg-white text-slate-800 shadow-sm font-semibold'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Edit3 className="w-3.5 h-3.5" />
-            <span>メモ帳</span>
-          </button>
-          <button
-            onClick={() => {
-              onCommitChange(type);
-              setViewMode('preview');
-            }}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all ${
-              viewMode === 'preview'
-                ? 'bg-white text-slate-800 shadow-sm font-semibold'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Eye className="w-3.5 h-3.5" />
-            <span>装飾ビュー</span>
-          </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {isDirty ? (
+            <button
+              onClick={() => onCommitChange(type)}
+              className="text-[11px] font-mono bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300 px-2 py-0.5 rounded transition-colors"
+              title="クリックまたは Ctrl+S で反対側へ反映"
+            >
+              未反映 (Ctrl+Sで反映)
+            </button>
+          ) : (
+            <span className="text-[11px] font-mono text-slate-400">
+              Ctrl+S で反映
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Pane Body */}
-      <div className="flex-1 relative overflow-hidden bg-slate-50/30">
-        {viewMode === 'editor' ? (
-          <div className="h-full flex flex-col">
-            <textarea
-              ref={textareaRef}
-              value={text}
-              onChange={(e) => onChangeText(e.target.value)}
-              onFocus={onFocus}
-              onBlur={() => {
-                onBlur();
-                onCommitChange(type);
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              spellCheck={false}
-              className="notepad-editor flex-1 w-full p-4 font-mono text-sm leading-relaxed text-slate-800 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-400 select-text"
-              style={{
-                fontFeatureSettings: '"tnum"',
-              }}
-            />
+      {/* Notepad Editor Container with Backdrop Highlight */}
+      <div className="relative flex-1 overflow-hidden bg-white">
+        {/* Backdrop Layer: renders only light marker backgrounds & comment ↳ symbol */}
+        <div
+          ref={backdropRef}
+          aria-hidden="true"
+          className="notepad-layer absolute inset-0 overflow-y-auto overflow-x-hidden pointer-events-none select-none font-mono text-sm leading-7 py-3 pl-6 pr-4 whitespace-pre-wrap break-words text-transparent"
+        >
+          {lines.map((line, idx) => {
+            const isHeader =
+              type === 'category'
+                ? isCategoryHeader(line)
+                : isThemeHeader(line);
 
-            {/* Quick Helper Footer */}
-            <div className="px-4 py-1.5 bg-slate-50 border-t border-slate-200/80 flex items-center justify-between text-xs text-slate-500 select-none">
-              <div className="flex items-center gap-2">
-                <Info className="w-3.5 h-3.5 text-slate-400" />
-                <span>
-                  {type === 'category'
-                    ? '見出し: !分類 / テーマ指定: [テーマ] / 期日: #MM/DD / 字下げ: スペース2つ'
-                    : '見出し: [テーマ] / 分類指定: !分類 / 期日: #MM/DD / 字下げ: スペース2つ'}
-                </span>
+            if (isHeader) {
+              return (
+                <div
+                  key={idx}
+                  className="bg-yellow-100/90 -mx-2 px-2 rounded-sm min-h-[1.75rem]"
+                >
+                  {line || '\u200B'}
+                </div>
+              );
+            }
+
+            if (isCommentLine(line)) {
+              const indentMatch = line.match(/^[ \t\u3000]+/);
+              const indentStr = indentMatch ? indentMatch[0] : '';
+              const bodyStr = line.slice(indentStr.length);
+              const isNarrowIndent = indentStr === ' ';
+
+              return (
+                <div
+                  key={idx}
+                  className="bg-slate-100/90 -mx-1 px-1 rounded-sm min-h-[1.75rem]"
+                >
+                  <span className="relative">
+                    {indentStr}
+                    <span
+                      className={`absolute top-0 text-slate-400 font-normal select-none ${
+                        isNarrowIndent ? '-left-3.5' : 'left-0'
+                      }`}
+                    >
+                      ↳
+                    </span>
+                  </span>
+                  {bodyStr || '\u200B'}
+                </div>
+              );
+            }
+
+            return (
+              <div key={idx} className="min-h-[1.75rem]">
+                {line || '\u200B'}
               </div>
-              <div className="flex items-center gap-2 text-slate-400 font-mono">
-                <span>Tab: 字下げ</span>
-                <span>•</span>
-                <span>Ctrl+S: 即時同期</span>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <TaskPreview
-            tasks={tasks}
-            paneType={type}
-            onDeleteTask={onDeleteTask}
-            onEditRequest={() => setViewMode('editor')}
-          />
-        )}
+            );
+          })}
+        </div>
+
+        {/* Foreground Native Textarea */}
+        <textarea
+          ref={textareaRef}
+          value={text}
+          onChange={(e) => onChangeText(e.target.value)}
+          onScroll={syncScroll}
+          onFocus={onFocus}
+          onBlur={onBlur}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoComplete="off"
+          autoCorrect="off"
+          className="notepad-layer relative z-10 w-full h-full overflow-y-auto overflow-x-hidden font-mono text-sm leading-7 py-3 pl-6 pr-4 whitespace-pre-wrap break-words text-slate-800 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-300"
+        />
       </div>
     </div>
   );
