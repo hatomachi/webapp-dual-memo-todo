@@ -534,30 +534,20 @@ export const compareDueDates = (d1: string | null, d2: string | null): number =>
 };
 
 /**
- * Sort tasks within each section by due date ascending
+ * Sort tasks by due date ascending (smart rolling year supported).
+ * Tasks with earlier due dates come first; tasks without due dates are placed at the end.
+ * Stable sort by existing order for tie-breaking.
+ *
+ * Sorting tasks globally by due date guarantees that when filtered by category OR by theme,
+ * all sections in BOTH panes simultaneously become sorted by due date ascending, without
+ * disrupting each other!
  */
-export const sortTasksByDueDate = (tasks: TaskItem[], primaryAxis: PaneType): TaskItem[] => {
-  const groups: { [key: string]: TaskItem[] } = {};
-
-  tasks.forEach((t) => {
-    const groupKey = primaryAxis === 'category' ? t.category || 'inbox' : t.theme || 'Uncategorized';
-    if (!groups[groupKey]) {
-      groups[groupKey] = [];
-    }
-    groups[groupKey].push(t);
+export const sortTasksByDueDate = (tasks: TaskItem[], _primaryAxis?: PaneType): TaskItem[] => {
+  const cloned = [...tasks];
+  cloned.sort((a, b) => {
+    const dateCmp = compareDueDates(a.dueDate, b.dueDate);
+    if (dateCmp !== 0) return dateCmp;
+    return (a.order ?? 0) - (b.order ?? 0);
   });
-
-  const sortedTasks: TaskItem[] = [];
-
-  for (const key of Object.keys(groups)) {
-    const list = groups[key];
-    list.sort((a, b) => {
-      const dateCmp = compareDueDates(a.dueDate, b.dueDate);
-      if (dateCmp !== 0) return dateCmp;
-      return a.order - b.order;
-    });
-    sortedTasks.push(...list);
-  }
-
-  return sortedTasks;
+  return cloned.map((t, idx) => ({ ...t, order: idx }));
 };

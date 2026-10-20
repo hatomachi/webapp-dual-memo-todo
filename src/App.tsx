@@ -45,6 +45,19 @@ const STORAGE_KEY_CAT_TEXT = 'dual_memo_category_text_v3';
 const STORAGE_KEY_THM_TEXT = 'dual_memo_theme_text_v3';
 const STORAGE_KEY_CATEGORIES = 'dual_memo_categories_v3';
 const STORAGE_KEY_THEMES = 'dual_memo_themes_v3';
+const STORAGE_KEY_ACTIVE_MOBILE_PANE = 'dual_memo_active_mobile_pane_v1';
+
+const getInitialMobilePane = (): PaneType => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_ACTIVE_MOBILE_PANE);
+    if (saved === 'category' || saved === 'theme') {
+      return saved;
+    }
+  } catch {
+    // fallback
+  }
+  return 'category';
+};
 
 export const App: React.FC = () => {
   const [, setTasks] = useState<TaskItem[]>([]);
@@ -52,10 +65,19 @@ export const App: React.FC = () => {
   const [themeText, setThemeText] = useState<string>('');
   const [, setCategories] = useState<string[]>([]);
   const [, setThemes] = useState<string[]>([]);
-  const [activeMobilePane, setActiveMobilePane] = useState<PaneType>('category');
+  const [activeMobilePane, setActiveMobilePaneState] = useState<PaneType>(getInitialMobilePane);
   const [focusedPane, setFocusedPane] = useState<PaneType | null>(null);
   const [dirtyPane, setDirtyPane] = useState<PaneType | null>(null);
   const dirtyPaneRef = useRef<PaneType | null>(null);
+
+  const setActiveMobilePane = (pane: PaneType) => {
+    setActiveMobilePaneState(pane);
+    try {
+      localStorage.setItem(STORAGE_KEY_ACTIVE_MOBILE_PANE, pane);
+    } catch {
+      // ignore
+    }
+  };
 
   const updateDirtyPane = (pane: PaneType | null) => {
     dirtyPaneRef.current = pane;
@@ -205,8 +227,10 @@ export const App: React.FC = () => {
             ? payload.themes
             : extractThemeSections(payload.themeText || '');
 
-        const newCat = formatTasksToCategoryText(loadedTasks, loadedCats);
-        const newThm = formatTasksToThemeText(loadedTasks, loadedThms);
+        // Sort tasks globally by due date so both panes (categories and themes) are naturally ordered by due date
+        const sortedLoadedTasks = sortTasksByDueDate(loadedTasks);
+        const newCat = formatTasksToCategoryText(sortedLoadedTasks, loadedCats);
+        const newThm = formatTasksToThemeText(sortedLoadedTasks, loadedThms);
 
         // If current text is already identical to remote, just mark success
         if (
@@ -222,12 +246,12 @@ export const App: React.FC = () => {
 
         // Only apply if user is still not dirty
         if (dirtyPaneRef.current === null) {
-          updateTasks(loadedTasks);
+          updateTasks(sortedLoadedTasks);
           updateCategories(loadedCats);
           updateThemes(loadedThms);
           updateCategoryText(newCat);
           updateThemeText(newThm);
-          saveToStorage(loadedTasks, newCat, newThm, loadedCats, loadedThms);
+          saveToStorage(sortedLoadedTasks, newCat, newThm, loadedCats, loadedThms);
           setSyncStatus('success');
           const now = Date.now();
           setLastSyncedAt(now);
@@ -340,15 +364,23 @@ export const App: React.FC = () => {
       }
     }
 
-    updateTasks(initialT);
+    // Sort tasks on startup by due date so both panes (category and theme) open in due date order
+    const sortedInitialT = initialT.length > 0 ? sortTasksByDueDate(initialT) : initialT;
+    const initialSortedCat = initialCat ? formatTasksToCategoryText(sortedInitialT, initialCats) : initialCat;
+    const initialSortedThm = initialThm ? formatTasksToThemeText(sortedInitialT, initialThms) : initialThm;
+
+    updateTasks(sortedInitialT);
     updateCategories(initialCats);
     updateThemes(initialThms);
-    updateCategoryText(initialCat);
-    updateThemeText(initialThm);
+    updateCategoryText(initialSortedCat);
+    updateThemeText(initialSortedThm);
+    if (initialT.length > 0) {
+      saveToStorage(sortedInitialT, initialSortedCat, initialSortedThm, initialCats, initialThms);
+    }
 
     // If history is empty, record initial state
     if (loadedHist.snapshots.length === 0) {
-      const updatedHist = addSnapshot(loadedHist, '初期ロード', initialCat, initialThm);
+      const updatedHist = addSnapshot(loadedHist, '初期ロード', initialSortedCat, initialSortedThm);
       setHistoryState(updatedHist);
     } else {
       setHistoryState(loadedHist);
@@ -443,7 +475,6 @@ export const App: React.FC = () => {
     let currentTasks = tasksRef.current;
     let currentCats = categoriesRef.current;
     let currentThms = themesRef.current;
-    const activeSource = dirtyPane || focusedPane || activeMobilePane || 'category';
     if (dirtyPane === 'category') {
       currentCats = extractCategorySections(categoryTextRef.current);
       currentTasks = parseCategoryText(categoryTextRef.current, currentTasks);
@@ -454,7 +485,8 @@ export const App: React.FC = () => {
       updateThemes(currentThms);
     }
 
-    const sorted = sortTasksByDueDate(currentTasks, activeSource);
+    // Sort tasks globally by due date so all sections in both panes are sorted by due date
+    const sorted = sortTasksByDueDate(currentTasks);
     const newCatText = formatTasksToCategoryText(sorted, currentCats);
     const newThmText = formatTasksToThemeText(sorted, currentThms);
 
@@ -465,14 +497,14 @@ export const App: React.FC = () => {
     updateDirtyPane(null);
 
     const label = '期日ソート';
-    showToast('⚡️ 各区切りを期日順にソートしました');
+    showToast('⚡️ 各区切りを期日順にソートしました (両ペイン)');
 
     // Record snapshot
     setHistoryState((prev) => addSnapshot(prev, label, newCatText, newThmText));
 
     // Background push
     triggerBackgroundGitHubPush(sorted, currentCats, currentThms, label);
-  }, [dirtyPane, focusedPane, activeMobilePane, saveToStorage, triggerBackgroundGitHubPush]);
+  }, [dirtyPane, saveToStorage, triggerBackgroundGitHubPush]);
 
   // Undo (restore previous snapshot in stack)
   const canUndo = historyState.currentIndex > 0;
@@ -588,15 +620,16 @@ export const App: React.FC = () => {
           ? payload.themes
           : extractThemeSections(payload.themeText || '');
 
-      const newCat = formatTasksToCategoryText(loadedTasks, loadedCats);
-      const newThm = formatTasksToThemeText(loadedTasks, loadedThms);
+      const sortedLoadedTasks = sortTasksByDueDate(loadedTasks);
+      const newCat = formatTasksToCategoryText(sortedLoadedTasks, loadedCats);
+      const newThm = formatTasksToThemeText(sortedLoadedTasks, loadedThms);
 
-      updateTasks(loadedTasks);
+      updateTasks(sortedLoadedTasks);
       updateCategories(loadedCats);
       updateThemes(loadedThms);
       updateCategoryText(newCat);
       updateThemeText(newThm);
-      saveToStorage(loadedTasks, newCat, newThm, loadedCats, loadedThms);
+      saveToStorage(sortedLoadedTasks, newCat, newThm, loadedCats, loadedThms);
       updateDirtyPane(null);
 
       setSyncStatus('success');
