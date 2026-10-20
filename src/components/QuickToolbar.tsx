@@ -3,6 +3,7 @@ import {
   CornerDownRight,
   Hash,
   Brackets,
+  CheckCircle2,
   Save,
 } from 'lucide-react';
 import { InlineTagInfo, SuggestionTrigger, HierarchicalOption } from '../utils/tagHelper';
@@ -15,6 +16,7 @@ interface QuickToolbarProps {
   onInsertIndentComment: () => void;
   onInsertDueDate: (dateStr: string) => void;
   onOpenCalendar: () => void;
+  onCompleteCurrentTask?: () => void;
   onCommit: () => void;
   isDirty: boolean;
   isKeyboardOpen?: boolean;
@@ -106,6 +108,7 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
   onInsertIndentComment,
   onInsertDueDate,
   onOpenCalendar,
+  onCompleteCurrentTask,
   onCommit,
   isDirty,
   isKeyboardOpen = false,
@@ -232,6 +235,17 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
           >
             <CornerDownRight className="w-3.5 h-3.5" />
           </ToolbarButton>
+
+          {/* Complete task button */}
+          {onCompleteCurrentTask && (
+            <ToolbarButton
+              onTrigger={onCompleteCurrentTask}
+              className="flex items-center justify-center px-2 py-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 rounded text-xs font-medium text-emerald-400 hover:text-emerald-300 transition-colors min-w-[32px] cursor-pointer"
+              title="カーソル行のタスクを完了にして退避"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+            </ToolbarButton>
+          )}
         </div>
 
         {/* Right side: Save commit button (Leaves wide space in between for future extensions) */}

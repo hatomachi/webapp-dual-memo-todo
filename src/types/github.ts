@@ -1,9 +1,12 @@
+import { CompletedTaskItem } from './todo';
+
 export interface GitHubSettings {
   token: string;
   owner: string;
   repo: string;
   branch: string;
   path: string;
+  archivePath?: string; // e.g. "todo-archive.json"
   autoSyncOnSave: boolean;
 }
 
@@ -11,6 +14,7 @@ export interface RemotePayload {
   version: number;
   updatedAt: string;
   tasks: any[];
+  completedTasks?: CompletedTaskItem[];
   categories?: string[];
   themes?: string[];
   categoryText?: string;

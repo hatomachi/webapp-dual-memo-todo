@@ -65,6 +65,10 @@ interface MemoPaneProps {
   categoryOptions?: HierarchicalOption[];
   themeOptions?: HierarchicalOption[];
   onOpenCalendar?: () => void;
+  completedTasksCount?: number;
+  completedCountByTheme?: Record<string, number>;
+  onOpenCompletedDrawer?: (themeName?: string) => void;
+  onArchiveTheme?: (themeName: string) => void;
 }
 
 const NAVIGATION_KEYS = new Set([
@@ -101,6 +105,10 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       categoryOptions = [],
       themeOptions = [],
       onOpenCalendar,
+      completedTasksCount,
+      completedCountByTheme,
+      onOpenCompletedDrawer,
+      onArchiveTheme,
     },
     ref
   ) => {
@@ -808,6 +816,23 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
+            {/* Completed tasks button (Theme pane only) */}
+            {type === 'theme' && onOpenCompletedDrawer && (
+              <button
+                type="button"
+                onClick={() => onOpenCompletedDrawer()}
+                className="text-[11px] flex items-center gap-1 px-2 py-0.5 rounded border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 transition-colors cursor-pointer"
+                title="完了タスク一覧（テーマ別）を開く"
+              >
+                <span>✔ 完了</span>
+                {completedTasksCount !== undefined && completedTasksCount > 0 && (
+                  <span className="font-mono text-[10px] bg-emerald-600 text-white px-1 rounded-full font-bold">
+                    {completedTasksCount}
+                  </span>
+                )}
+              </button>
+            )}
+
             {/* Table of contents toggle button (visible on mobile too) */}
             <button
               type="button"
@@ -863,6 +888,9 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
               isOpen={isNavOpen}
               onToggleOpen={() => setIsNavOpen(!isNavOpen)}
               onSelectSection={handleSelectSection}
+              completedCounts={completedCountByTheme}
+              onOpenCompletedDrawer={onOpenCompletedDrawer}
+              onArchiveTheme={onArchiveTheme}
             />
           </div>
 

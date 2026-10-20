@@ -303,3 +303,78 @@ export const pushToGitHub = async (
     throw err;
   }
 };
+
+/**
+ * Generic fetch for any JSON file in the same repository (e.g. todo-archive.json)
+ */
+export const fetchCustomJsonFromGitHub = async <T>(
+  settings: GitHubSettings,
+  relativePath: string
+): Promise<{ payload: T; sha: string } | null> => {
+  const customSettings: GitHubSettings = {
+    ...settings,
+    path: relativePath,
+  };
+  const remoteInfo = await fetchRemoteFileInfo(customSettings);
+  if (!remoteInfo.exists || !remoteInfo.content || !remoteInfo.sha) {
+    return null;
+  }
+  const decodedStr = base64ToUtf8(remoteInfo.content);
+  const payload = JSON.parse(decodedStr) as T;
+  return { payload, sha: remoteInfo.sha };
+};
+
+/**
+ * Generic push for any JSON file in the same repository (e.g. todo-archive.json)
+ */
+export const pushCustomJsonToGitHub = async <T>(
+  settings: GitHubSettings,
+  relativePath: string,
+  payload: T,
+  commitMessage?: string
+): Promise<{ newSha: string }> => {
+  const customSettings: GitHubSettings = {
+    ...settings,
+    path: relativePath,
+  };
+  const { owner, repo, branch, token } = normalizeGitHubSettings(customSettings);
+  const encodedPath = relativePath
+    .split('/')
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join('/');
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}`;
+
+  const remoteInfo = await fetchRemoteFileInfo(customSettings);
+  const shaToSend = remoteInfo.exists ? remoteInfo.sha : undefined;
+
+  const jsonString = JSON.stringify(payload, null, 2);
+  const contentBase64 = utf8ToBase64(jsonString);
+
+  const body: any = {
+    message: commitMessage || `chore: update archive [${new Date().toISOString()}]`,
+    content: contentBase64,
+    branch,
+  };
+  if (shaToSend) {
+    body.sha = shaToSend;
+  }
+
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.message || `GitHub error: ${res.status}`);
+  }
+
+  const resJson = await res.json();
+  return { newSha: resJson.content?.sha || resJson.commit?.sha };
+};

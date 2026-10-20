@@ -1,4 +1,4 @@
-import { TaskItem, PaneType, SectionItem } from '../types/todo';
+import { TaskItem, CompletedTaskItem, PaneType, SectionItem } from '../types/todo';
 import { checkDueDateStatus, DueDateStatus, resolveDueDate } from './dateHelper';
 
 /**
@@ -14,6 +14,20 @@ export const DUE_DATE_REGEX = /[#＃](?:(?:\d{4}|\d{2})[-/])?\d{1,2}[-/]\d{1,2}/
 const THEME_TAG_REGEX = /[\[［]([^\[\]［］\n#＃!！]+?)(?:[\]］]|$)/;
 // Category tag matching !categoryName or ！categoryName
 const CATEGORY_TAG_REGEX = /(?:^|\s)[!！]([^\s\[\]［］#＃!！]+)/;
+
+/**
+ * Check if category string means done/completed
+ */
+export const isDoneCategory = (cat: string): boolean => {
+  if (!cat) return false;
+  const lower = cat.toLowerCase();
+  return lower === 'done' || lower === '完了' || lower === 'completed';
+};
+
+export interface ParseTasksResult {
+  tasks: TaskItem[];
+  completedTasks: CompletedTaskItem[];
+}
 
 /**
  * Strip leading bullet characters ('・', '･', '•') and any leading whitespace from task title.
@@ -91,19 +105,23 @@ export const getLineDueDateStatus = (
 };
 
 /**
- * Parse text from the Left Pane (Category-oriented) into TaskItems.
+ * Parse text from the Left Pane (Category-oriented) into TaskItems and CompletedTaskItems.
  * Section headers: !categoryName (default: !inbox)
  * Inline tags on task lines: [themeName], #dueDate
+ * Tasks with category 'done' or '完了' are collected into completedTasks.
  */
-export const parseCategoryText = (
+export const parseCategoryTextWithCompleted = (
   text: string,
-  existingTasks: TaskItem[] = []
-): TaskItem[] => {
+  existingTasks: TaskItem[] = [],
+  existingCompletedTasks: CompletedTaskItem[] = []
+): ParseTasksResult => {
   const lines = text.split('\n');
   const tasks: TaskItem[] = [];
+  const completedTasks: CompletedTaskItem[] = [...existingCompletedTasks];
 
   let currentCategory = 'inbox';
   let currentTask: TaskItem | null = null;
+  let currentCompletedTask: CompletedTaskItem | null = null;
   let orderCounter = 0;
 
   for (let i = 0; i < lines.length; i++) {
@@ -117,14 +135,17 @@ export const parseCategoryText = (
     if (isCategoryHeader(rawLine)) {
       currentCategory = rawLine.trim().replace(/^[!！]/, '').trim() || 'inbox';
       currentTask = null;
+      currentCompletedTask = null;
       continue;
     }
 
     // 2. Check for Comment Line (indented with half-width space, full-width space, or tab)
     if (isCommentLine(rawLine)) {
+      const commentText = rawLine.replace(/^[ \t\u3000]+/, '');
       if (currentTask) {
-        const commentText = rawLine.replace(/^[ \t\u3000]+/, '');
         currentTask.comments.push(commentText);
+      } else if (currentCompletedTask) {
+        currentCompletedTask.comments.push(commentText);
       }
       continue;
     }
@@ -162,6 +183,29 @@ export const parseCategoryText = (
       continue;
     }
 
+    // If marked as done/完了
+    if (isDoneCategory(taskCategory)) {
+      const matchedExistingDone = completedTasks.find(
+        (t) => cleanTaskTitle(t.title) === title && t.theme === theme
+      );
+      currentTask = null;
+      if (matchedExistingDone) {
+        currentCompletedTask = matchedExistingDone;
+      } else {
+        currentCompletedTask = {
+          id: generateId(),
+          title,
+          category: 'done',
+          theme,
+          dueDate,
+          comments: [],
+          completedAt: new Date().toISOString(),
+        };
+        completedTasks.unshift(currentCompletedTask);
+      }
+      continue;
+    }
+
     const matchedExisting = existingTasks.find(
       (t) => cleanTaskTitle(t.title) === title && t.category === taskCategory
     );
@@ -175,27 +219,39 @@ export const parseCategoryText = (
       comments: [],
       order: orderCounter++,
     };
+    currentCompletedTask = null;
 
     tasks.push(currentTask);
   }
 
-  return tasks;
+  return { tasks, completedTasks };
 };
 
-/**
- * Parse text from the Right Pane (Theme-oriented) into TaskItems.
- * Section headers: [themeName] (default: [Uncategorized])
- * Inline tags on task lines: !categoryName, #dueDate
- */
-export const parseThemeText = (
+export const parseCategoryText = (
   text: string,
   existingTasks: TaskItem[] = []
 ): TaskItem[] => {
+  return parseCategoryTextWithCompleted(text, existingTasks).tasks;
+};
+
+/**
+ * Parse text from the Right Pane (Theme-oriented) into TaskItems and CompletedTaskItems.
+ * Section headers: [themeName] (default: [Uncategorized])
+ * Inline tags on task lines: !categoryName, #dueDate
+ * Tasks with category 'done' or '完了' are collected into completedTasks.
+ */
+export const parseThemeTextWithCompleted = (
+  text: string,
+  existingTasks: TaskItem[] = [],
+  existingCompletedTasks: CompletedTaskItem[] = []
+): ParseTasksResult => {
   const lines = text.split('\n');
   const tasks: TaskItem[] = [];
+  const completedTasks: CompletedTaskItem[] = [...existingCompletedTasks];
 
   let currentTheme = 'Uncategorized';
   let currentTask: TaskItem | null = null;
+  let currentCompletedTask: CompletedTaskItem | null = null;
   let orderCounter = 0;
 
   for (let i = 0; i < lines.length; i++) {
@@ -210,14 +266,17 @@ export const parseThemeText = (
       const trimmed = rawLine.trim();
       currentTheme = trimmed.slice(1, -1).trim() || 'Uncategorized';
       currentTask = null;
+      currentCompletedTask = null;
       continue;
     }
 
     // 2. Check for Comment Line
     if (isCommentLine(rawLine)) {
+      const commentText = rawLine.replace(/^[ \t\u3000]+/, '');
       if (currentTask) {
-        const commentText = rawLine.replace(/^[ \t\u3000]+/, '');
         currentTask.comments.push(commentText);
+      } else if (currentCompletedTask) {
+        currentCompletedTask.comments.push(commentText);
       }
       continue;
     }
@@ -255,6 +314,29 @@ export const parseThemeText = (
       continue;
     }
 
+    // If marked as done/完了
+    if (isDoneCategory(category)) {
+      const matchedExistingDone = completedTasks.find(
+        (t) => cleanTaskTitle(t.title) === title && t.theme === taskTheme
+      );
+      currentTask = null;
+      if (matchedExistingDone) {
+        currentCompletedTask = matchedExistingDone;
+      } else {
+        currentCompletedTask = {
+          id: generateId(),
+          title,
+          category: 'done',
+          theme: taskTheme,
+          dueDate,
+          comments: [],
+          completedAt: new Date().toISOString(),
+        };
+        completedTasks.unshift(currentCompletedTask);
+      }
+      continue;
+    }
+
     const matchedExisting = existingTasks.find(
       (t) => cleanTaskTitle(t.title) === title && t.theme === taskTheme
     );
@@ -268,11 +350,19 @@ export const parseThemeText = (
       comments: [],
       order: orderCounter++,
     };
+    currentCompletedTask = null;
 
     tasks.push(currentTask);
   }
 
-  return tasks;
+  return { tasks, completedTasks };
+};
+
+export const parseThemeText = (
+  text: string,
+  existingTasks: TaskItem[] = []
+): TaskItem[] => {
+  return parseThemeTextWithCompleted(text, existingTasks).tasks;
 };
 
 /**
@@ -452,10 +542,14 @@ export const formatTasksToThemeText = (
 
 /**
  * Extract distinct category section headers from text in appearance order.
+ * Excludes done/完了 sections so they don't pollute the active categories.
  */
 export const extractCategorySections = (text: string): string[] => {
   const sections = extractSectionsFromText(text, 'category');
-  return organizeSections(sections.map((s) => s.raw), 'inbox');
+  return organizeSections(
+    sections.map((s) => s.raw).filter((s) => !isDoneCategory(s)),
+    'inbox'
+  );
 };
 
 /**

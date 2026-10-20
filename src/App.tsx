@@ -1,13 +1,18 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { PaneType, TaskItem } from './types/todo';
+import { PaneType, TaskItem, CompletedTaskItem, ArchiveData } from './types/todo';
 import {
   parseCategoryText,
   parseThemeText,
+  parseCategoryTextWithCompleted,
+  parseThemeTextWithCompleted,
   formatTasksToCategoryText,
   formatTasksToThemeText,
   sortTasksByDueDate,
   extractCategorySections,
   extractThemeSections,
+  cleanTaskTitle,
+  generateId,
+  DUE_DATE_REGEX,
 } from './utils/parser';
 import {
   InlineTagInfo,
@@ -21,6 +26,8 @@ import { HelpModal } from './components/HelpModal';
 import { HistoryModal } from './components/HistoryModal';
 import { SettingsModal } from './components/SettingsModal';
 import { CalendarPickerModal } from './components/CalendarPickerModal';
+import { CompletedTasksDrawer } from './components/CompletedTasksDrawer';
+import { ArchiveModal } from './components/ArchiveModal';
 import { QuickToolbar } from './components/QuickToolbar';
 import { useVisualViewport } from './hooks/useVisualViewport';
 import { HistoryState } from './types/history';
@@ -29,6 +36,13 @@ import {
   addSnapshot,
   persistHistoryState,
 } from './utils/historyManager';
+import {
+  loadArchiveData,
+  archiveTheme,
+  restoreArchivedTheme,
+  fetchArchiveFromGitHubRepo,
+  pushArchiveToGitHubRepo,
+} from './utils/archiveManager';
 import { GitHubSettings, SyncStatus, RemotePayload } from './types/github';
 import {
   loadGitHubSettings,
@@ -41,6 +55,7 @@ import {
 import { checkForServiceWorkerUpdate } from './utils/pwaUpdate';
 
 const STORAGE_KEY_TASKS = 'dual_memo_tasks_v3';
+const STORAGE_KEY_COMPLETED_TASKS = 'dual_memo_completed_tasks_v1';
 const STORAGE_KEY_CAT_TEXT = 'dual_memo_category_text_v3';
 const STORAGE_KEY_THM_TEXT = 'dual_memo_theme_text_v3';
 const STORAGE_KEY_CATEGORIES = 'dual_memo_categories_v3';
@@ -93,7 +108,14 @@ export const App: React.FC = () => {
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isCalendarOpen, setIsCalendarOpen] = useState<boolean>(false);
+  const [isCompletedDrawerOpen, setIsCompletedDrawerOpen] = useState<boolean>(false);
+  const [selectedThemeForCompletedDrawer, setSelectedThemeForCompletedDrawer] = useState<string | null>(null);
+  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [lastCompletedTaskForUndo, setLastCompletedTaskForUndo] = useState<CompletedTaskItem | null>(null);
+
+  // Archive data (frozen storage in todo-archive.json)
+  const [archiveData, setArchiveData] = useState<ArchiveData>(loadArchiveData);
 
   // History state (30 generations undo/redo)
   const [historyState, setHistoryState] = useState<HistoryState>({
@@ -113,6 +135,7 @@ export const App: React.FC = () => {
   const categoriesRef = useRef<string[]>([]);
   const themesRef = useRef<string[]>([]);
   const tasksRef = useRef<TaskItem[]>([]);
+  const completedTasksRef = useRef<CompletedTaskItem[]>([]);
 
   // MemoPane handles for QuickToolbar actions
   const categoryPaneRef = useRef<MemoPaneHandle>(null);
@@ -141,6 +164,16 @@ export const App: React.FC = () => {
   const updateTasks = (val: TaskItem[]) => {
     tasksRef.current = val;
     setTasks(val);
+  };
+
+  const updateCompletedTasks = (val: CompletedTaskItem[]) => {
+    completedTasksRef.current = val;
+    // Save to localStorage
+    try {
+      localStorage.setItem(STORAGE_KEY_COMPLETED_TASKS, JSON.stringify(val));
+    } catch (e) {
+      console.warn('Failed to save completed tasks to localStorage', e);
+    }
   };
 
   // Memoized hierarchical options for suggestions
@@ -174,7 +207,8 @@ export const App: React.FC = () => {
       newCatText: string,
       newThmText: string,
       newCats?: string[],
-      newThms?: string[]
+      newThms?: string[],
+      newCompleted?: CompletedTaskItem[]
     ) => {
       try {
         localStorage.setItem(STORAGE_KEY_TASKS, JSON.stringify(newTasks));
@@ -185,6 +219,9 @@ export const App: React.FC = () => {
         }
         if (newThms) {
           localStorage.setItem(STORAGE_KEY_THEMES, JSON.stringify(newThms));
+        }
+        if (newCompleted) {
+          localStorage.setItem(STORAGE_KEY_COMPLETED_TASKS, JSON.stringify(newCompleted));
         }
       } catch (err) {
         console.error('Failed to save to localStorage', err);
@@ -226,6 +263,17 @@ export const App: React.FC = () => {
           Array.isArray(payload.themes) && payload.themes.length > 0
             ? payload.themes
             : extractThemeSections(payload.themeText || '');
+
+        if (Array.isArray(payload.completedTasks)) {
+          updateCompletedTasks(payload.completedTasks);
+        }
+
+        // Also fetch archive in background if available
+        fetchArchiveFromGitHubRepo(settings).then((remoteArchive) => {
+          if (remoteArchive) {
+            setArchiveData(remoteArchive);
+          }
+        }).catch(() => {});
 
         // Sort tasks globally by due date so both panes (categories and themes) are naturally ordered by due date
         const sortedLoadedTasks = sortTasksByDueDate(loadedTasks);
@@ -277,7 +325,8 @@ export const App: React.FC = () => {
       tasks: TaskItem[],
       cats: string[],
       thms: string[],
-      label: string
+      label: string,
+      customCompletedTasks?: CompletedTaskItem[]
     ) => {
       const settings = loadGitHubSettings();
       if (!settings || !settings.token || !settings.owner || !settings.repo) {
@@ -296,6 +345,7 @@ export const App: React.FC = () => {
           categories: cats,
           themes: thms,
           tasks,
+          completedTasks: customCompletedTasks || completedTasksRef.current,
         };
         await pushToGitHub(settings, payload, `chore: update memo (${label})`);
         setSyncStatus('success');
@@ -328,10 +378,18 @@ export const App: React.FC = () => {
 
     try {
       const savedTasksJson = localStorage.getItem(STORAGE_KEY_TASKS);
+      const savedCompletedJson = localStorage.getItem(STORAGE_KEY_COMPLETED_TASKS);
       const savedCatText = localStorage.getItem(STORAGE_KEY_CAT_TEXT);
       const savedThmText = localStorage.getItem(STORAGE_KEY_THM_TEXT);
       const savedCatsJson = localStorage.getItem(STORAGE_KEY_CATEGORIES);
       const savedThmsJson = localStorage.getItem(STORAGE_KEY_THEMES);
+
+      if (savedCompletedJson) {
+        const loadedCompleted = JSON.parse(savedCompletedJson);
+        if (Array.isArray(loadedCompleted)) {
+          updateCompletedTasks(loadedCompleted);
+        }
+      }
 
       if (savedCatsJson) {
         initialCats = JSON.parse(savedCatsJson);
@@ -429,27 +487,43 @@ export const App: React.FC = () => {
         label = '左 ➔ 右 反映';
         const rawCat = categoryTextRef.current;
         newCats = extractCategorySections(rawCat);
-        newTasks = parseCategoryText(rawCat, tasksRef.current);
+        const parsed = parseCategoryTextWithCompleted(
+          rawCat,
+          tasksRef.current,
+          completedTasksRef.current
+        );
+        newTasks = parsed.tasks;
+        if (parsed.completedTasks.length !== completedTasksRef.current.length) {
+          updateCompletedTasks(parsed.completedTasks);
+        }
         newCat = formatTasksToCategoryText(newTasks, newCats);
         newThm = formatTasksToThemeText(newTasks, newThms);
         updateCategories(newCats);
         updateTasks(newTasks);
         updateCategoryText(newCat);
         updateThemeText(newThm);
-        saveToStorage(newTasks, newCat, newThm, newCats, newThms);
+        saveToStorage(newTasks, newCat, newThm, newCats, newThms, parsed.completedTasks);
         showToast('💾 左 ➔ 右へ反映しました');
       } else {
         label = '右 ➔ 左 反映';
         const rawThm = themeTextRef.current;
         newThms = extractThemeSections(rawThm);
-        newTasks = parseThemeText(rawThm, tasksRef.current);
+        const parsed = parseThemeTextWithCompleted(
+          rawThm,
+          tasksRef.current,
+          completedTasksRef.current
+        );
+        newTasks = parsed.tasks;
+        if (parsed.completedTasks.length !== completedTasksRef.current.length) {
+          updateCompletedTasks(parsed.completedTasks);
+        }
         newThm = formatTasksToThemeText(newTasks, newThms);
         newCat = formatTasksToCategoryText(newTasks, newCats);
         updateThemes(newThms);
         updateTasks(newTasks);
         updateCategoryText(newCat);
         updateThemeText(newThm);
-        saveToStorage(newTasks, newCat, newThm, newCats, newThms);
+        saveToStorage(newTasks, newCat, newThm, newCats, newThms, parsed.completedTasks);
         showToast('💾 右 ➔ 左へ反映しました');
       }
 
@@ -469,6 +543,237 @@ export const App: React.FC = () => {
     },
     [saveToStorage, triggerBackgroundGitHubPush]
   );
+
+  // Complete current task at cursor
+  const handleCompleteCurrentTask = useCallback(() => {
+    const activePane = focusedPane || activeMobilePane;
+    const activeHandle = activePane === 'category' ? categoryPaneRef.current : themePaneRef.current;
+    const cursor = activeHandle?.getCursorLineAndCol?.();
+    if (!cursor) {
+      showToast('⚠️ 完了にするタスク行を選択してください');
+      return;
+    }
+
+    const currentText = activePane === 'category' ? categoryTextRef.current : themeTextRef.current;
+    const lines = currentText.split('\n');
+    const targetIdx = cursor.lineIdx;
+
+    if (targetIdx < 0 || targetIdx >= lines.length) return;
+    const line = lines[targetIdx];
+
+    if (
+      line.trim() === '' ||
+      line.trim().startsWith('!') ||
+      line.trim().startsWith('[') ||
+      /^[ \t\u3000]+/.test(line)
+    ) {
+      showToast('⚠️ 完了にするタスク行を選択してください');
+      return;
+    }
+
+    const collectedComments: string[] = [];
+    let endIdx = targetIdx + 1;
+    while (endIdx < lines.length && /^[ \t\u3000]+/.test(lines[endIdx])) {
+      collectedComments.push(lines[endIdx].replace(/^[ \t\u3000]+/, ''));
+      endIdx++;
+    }
+
+    let lineWorking = line.trim();
+    let theme = 'Uncategorized';
+    const themeMatch = lineWorking.match(/[\[［]([^\[\]［］\n#＃!！]+?)(?:[\]］]|$)/);
+    if (themeMatch) {
+      theme = themeMatch[1].trim() || 'Uncategorized';
+      lineWorking = lineWorking.replace(themeMatch[0], ' ');
+    } else if (activePane === 'theme') {
+      for (let i = targetIdx - 1; i >= 0; i--) {
+        if (/^[\[［][^\[\]［］]+[\]］]$/.test(lines[i].trim())) {
+          theme = lines[i].trim().slice(1, -1).trim() || 'Uncategorized';
+          break;
+        }
+      }
+    }
+
+    let dueDate: string | null = null;
+    const dueDateMatch = lineWorking.match(DUE_DATE_REGEX);
+    if (dueDateMatch) {
+      dueDate = dueDateMatch[0].replace(/^[#＃]/, '').trim();
+      lineWorking = lineWorking.replace(dueDateMatch[0], ' ');
+    }
+
+    let category = 'inbox';
+    const catMatch = lineWorking.match(/(?:^|\s)[!！]([^\s\[\]［］#＃!！]+)/);
+    if (catMatch) {
+      category = catMatch[1].trim() || 'inbox';
+      lineWorking = lineWorking.replace(catMatch[0], ' ');
+    } else if (activePane === 'category') {
+      for (let i = targetIdx - 1; i >= 0; i--) {
+        if (/^[!！].+/.test(lines[i].trim())) {
+          category = lines[i].trim().replace(/^[!！]/, '').trim() || 'inbox';
+          break;
+        }
+      }
+    }
+
+    const title = cleanTaskTitle(lineWorking.replace(/\s+/g, ' ').trim());
+    if (!title) return;
+
+    const completedItem: CompletedTaskItem = {
+      id: generateId(),
+      title,
+      category,
+      theme,
+      dueDate,
+      comments: collectedComments,
+      completedAt: new Date().toISOString(),
+    };
+
+    lines.splice(targetIdx, endIdx - targetIdx);
+    const updatedRawText = lines.join('\n');
+
+    const newCompleted = [completedItem, ...completedTasksRef.current];
+    updateCompletedTasks(newCompleted);
+    setLastCompletedTaskForUndo(completedItem);
+
+    if (activePane === 'category') {
+      const newCats = extractCategorySections(updatedRawText);
+      const parsed = parseCategoryTextWithCompleted(updatedRawText, tasksRef.current, newCompleted);
+      const newTasks = parsed.tasks;
+      const newCat = formatTasksToCategoryText(newTasks, newCats);
+      const newThm = formatTasksToThemeText(newTasks, themesRef.current);
+      updateCategories(newCats);
+      updateTasks(newTasks);
+      updateCategoryText(newCat);
+      updateThemeText(newThm);
+      saveToStorage(newTasks, newCat, newThm, newCats, themesRef.current, newCompleted);
+      triggerBackgroundGitHubPush(newTasks, newCats, themesRef.current, `complete: ${title}`);
+    } else {
+      const newThms = extractThemeSections(updatedRawText);
+      const parsed = parseThemeTextWithCompleted(updatedRawText, tasksRef.current, newCompleted);
+      const newTasks = parsed.tasks;
+      const newThm = formatTasksToThemeText(newTasks, newThms);
+      const newCat = formatTasksToCategoryText(newTasks, categoriesRef.current);
+      updateThemes(newThms);
+      updateTasks(newTasks);
+      updateCategoryText(newCat);
+      updateThemeText(newThm);
+      saveToStorage(newTasks, newCat, newThm, categoriesRef.current, newThms, newCompleted);
+      triggerBackgroundGitHubPush(newTasks, categoriesRef.current, newThms, `complete: ${title}`);
+    }
+
+    updateDirtyPane(null);
+    showToast(`✔︎「${title}」を完了にしました`);
+  }, [focusedPane, activeMobilePane, saveToStorage, triggerBackgroundGitHubPush]);
+
+  // Restore completed task back to active tasks
+  const handleRestoreCompletedTask = useCallback(
+    (taskId: string) => {
+      const found = completedTasksRef.current.find((t) => t.id === taskId);
+      if (!found) return;
+
+      const remaining = completedTasksRef.current.filter((t) => t.id !== taskId);
+      updateCompletedTasks(remaining);
+
+      const restored: TaskItem = {
+        id: found.id,
+        title: found.title,
+        category: found.category && found.category !== 'done' ? found.category : 'inbox',
+        theme: found.theme || 'Uncategorized',
+        dueDate: found.dueDate,
+        comments: found.comments,
+        order: tasksRef.current.length,
+      };
+
+      const newTasks = [restored, ...tasksRef.current];
+      const newCat = formatTasksToCategoryText(newTasks, categoriesRef.current);
+      const newThm = formatTasksToThemeText(newTasks, themesRef.current);
+
+      updateTasks(newTasks);
+      updateCategoryText(newCat);
+      updateThemeText(newThm);
+      saveToStorage(newTasks, newCat, newThm, categoriesRef.current, themesRef.current, remaining);
+      triggerBackgroundGitHubPush(newTasks, categoriesRef.current, themesRef.current, `restore: ${found.title}`);
+
+      showToast(`↩️「${found.title}」を未完了に復元しました`);
+    },
+    [saveToStorage, triggerBackgroundGitHubPush]
+  );
+
+  // Archive entire theme to todo-archive.json
+  const handleArchiveTheme = useCallback(
+    (themeName: string) => {
+      const res = archiveTheme(
+        themeName,
+        tasksRef.current,
+        completedTasksRef.current,
+        archiveData
+      );
+
+      updateTasks(res.updatedTasks);
+      updateCompletedTasks(res.updatedCompletedTasks);
+      const newThms = res.updatedThemes(themesRef.current);
+      updateThemes(newThms);
+      setArchiveData(res.updatedArchive);
+
+      const newCat = formatTasksToCategoryText(res.updatedTasks, categoriesRef.current);
+      const newThm = formatTasksToThemeText(res.updatedTasks, newThms);
+      updateCategoryText(newCat);
+      updateThemeText(newThm);
+
+      saveToStorage(res.updatedTasks, newCat, newThm, categoriesRef.current, newThms, res.updatedCompletedTasks);
+
+      triggerBackgroundGitHubPush(res.updatedTasks, categoriesRef.current, newThms, `archive theme: ${themeName}`);
+      const settings = loadGitHubSettings();
+      if (settings) {
+        pushArchiveToGitHubRepo(settings, res.updatedArchive);
+      }
+
+      showToast(`📦 テーマ「${themeName}」をアーカイブしました (${res.archivedCount}件)`);
+    },
+    [archiveData, saveToStorage, triggerBackgroundGitHubPush]
+  );
+
+  // Restore archived theme from todo-archive.json
+  const handleRestoreArchivedTheme = useCallback(
+    (themeName: string) => {
+      try {
+        const res = restoreArchivedTheme(themeName, archiveData);
+        setArchiveData(res.updatedArchive);
+
+        const newThms = [res.restoredThemeName, ...themesRef.current.filter((th) => th !== res.restoredThemeName)];
+        const newTasks = [...res.restoredTasks, ...tasksRef.current];
+
+        updateThemes(newThms);
+        updateTasks(newTasks);
+
+        const newCat = formatTasksToCategoryText(newTasks, categoriesRef.current);
+        const newThm = formatTasksToThemeText(newTasks, newThms);
+        updateCategoryText(newCat);
+        updateThemeText(newThm);
+
+        saveToStorage(newTasks, newCat, newThm, categoriesRef.current, newThms);
+        triggerBackgroundGitHubPush(newTasks, categoriesRef.current, newThms, `restore theme: ${themeName}`);
+
+        const settings = loadGitHubSettings();
+        if (settings) {
+          pushArchiveToGitHubRepo(settings, res.updatedArchive);
+        }
+
+        showToast(`↩️ テーマ「${themeName}」を現役に復元しました`);
+      } catch (e: any) {
+        showToast(`⚠️ 復元に失敗しました: ${e.message}`);
+      }
+    },
+    [archiveData, saveToStorage, triggerBackgroundGitHubPush]
+  );
+
+  const completedCountByTheme = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const task of completedTasksRef.current) {
+      const th = task.theme || 'Uncategorized';
+      counts[th] = (counts[th] || 0) + 1;
+    }
+    return counts;
+  }, [categoryText, themeText, isCompletedDrawerOpen]);
 
   // Sort by due date within each section
   const handleSortDueDates = useCallback(() => {
@@ -753,6 +1058,8 @@ export const App: React.FC = () => {
           }}
           onToggleHelp={() => setIsHelpOpen(true)}
           onToggleHistory={() => setIsHistoryOpen(true)}
+          onToggleArchive={() => setIsArchiveModalOpen(true)}
+          archiveThemeCount={archiveData.archivedThemes.length}
           onToggleSettings={() => setIsSettingsOpen(true)}
           canUndo={canUndo}
           canRedo={canRedo}
@@ -840,6 +1147,13 @@ export const App: React.FC = () => {
               categoryOptions={categoryOptions}
               themeOptions={themeOptions}
               onOpenCalendar={handleOpenCalendar}
+              completedTasksCount={completedTasksRef.current.length}
+              completedCountByTheme={completedCountByTheme}
+              onOpenCompletedDrawer={(th) => {
+                setSelectedThemeForCompletedDrawer(th || null);
+                setIsCompletedDrawerOpen(true);
+              }}
+              onArchiveTheme={handleArchiveTheme}
             />
           </div>
         </div>
@@ -851,6 +1165,7 @@ export const App: React.FC = () => {
         onInsertIndentComment={handleQuickInsertIndent}
         onInsertDueDate={handleQuickInsertDueDate}
         onOpenCalendar={handleOpenCalendar}
+        onCompleteCurrentTask={handleCompleteCurrentTask}
         onCommit={() => {
           const targetPane = dirtyPane || focusedPane || activeMobilePane;
           handleCommitChange(targetPane);
@@ -904,6 +1219,23 @@ export const App: React.FC = () => {
         selectedDateStr={getActivePaneHandle()?.getCurrentLineDueDate()}
       />
 
+      <CompletedTasksDrawer
+        isOpen={isCompletedDrawerOpen}
+        onClose={() => setIsCompletedDrawerOpen(false)}
+        completedTasks={completedTasksRef.current}
+        themes={themesRef.current}
+        initialSelectedTheme={selectedThemeForCompletedDrawer}
+        onRestoreTask={handleRestoreCompletedTask}
+        onArchiveTheme={handleArchiveTheme}
+      />
+
+      <ArchiveModal
+        isOpen={isArchiveModalOpen}
+        onClose={() => setIsArchiveModalOpen(false)}
+        archiveData={archiveData}
+        onRestoreTheme={handleRestoreArchivedTheme}
+      />
+
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
@@ -918,8 +1250,20 @@ export const App: React.FC = () => {
 
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-14 right-4 z-50 bg-slate-800 text-white text-xs font-medium px-3.5 py-2 rounded-lg shadow-xl animate-fadeIn">
-          {toastMessage}
+        <div className="fixed bottom-14 right-4 z-50 bg-slate-800 text-white text-xs font-medium px-3.5 py-2 rounded-lg shadow-xl animate-fadeIn flex items-center gap-2">
+          <span>{toastMessage}</span>
+          {lastCompletedTaskForUndo && toastMessage.includes('完了にしました') && (
+            <button
+              type="button"
+              onClick={() => {
+                handleRestoreCompletedTask(lastCompletedTaskForUndo.id);
+                setLastCompletedTaskForUndo(null);
+              }}
+              className="text-amber-300 hover:text-amber-200 underline font-bold cursor-pointer text-xs"
+            >
+              元に戻す
+            </button>
+          )}
         </div>
       )}
     </div>

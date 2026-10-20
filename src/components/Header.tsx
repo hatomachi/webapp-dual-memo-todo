@@ -8,6 +8,7 @@ import {
   Undo2,
   Redo2,
   Clock,
+  Archive,
   Cloud,
   CloudOff,
   CheckCircle2,
@@ -19,6 +20,8 @@ interface HeaderProps {
   onManualSync: () => void;
   onToggleHelp: () => void;
   onToggleHistory: () => void;
+  onToggleArchive?: () => void;
+  archiveThemeCount?: number;
   onToggleSettings: () => void;
   canUndo: boolean;
   canRedo: boolean;
@@ -36,6 +39,8 @@ export const Header: React.FC<HeaderProps> = ({
   onManualSync,
   onToggleHelp,
   onToggleHistory,
+  onToggleArchive,
+  archiveThemeCount = 0,
   onToggleSettings,
   canUndo,
   canRedo,
@@ -118,6 +123,21 @@ export const Header: React.FC<HeaderProps> = ({
             <Clock className="w-4 h-4" />
             <span className="text-[11px] font-mono hidden md:inline">{historyCount}世代</span>
           </button>
+
+          {/* Archive Modal Button */}
+          {onToggleArchive && (
+            <button
+              type="button"
+              onClick={onToggleArchive}
+              title={`プロジェクト保管庫 (アーカイブ済み ${archiveThemeCount}テーマ)`}
+              className="flex items-center gap-1 p-1.5 sm:px-2 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-md transition-colors"
+            >
+              <Archive className="w-4 h-4 text-amber-600" />
+              <span className="text-[11px] font-mono hidden md:inline">
+                保管庫{archiveThemeCount > 0 ? ` (${archiveThemeCount})` : ''}
+              </span>
+            </button>
+          )}
 
           {/* Due date sort button (visible on mobile and desktop) */}
           <button

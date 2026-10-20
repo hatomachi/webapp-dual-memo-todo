@@ -10,6 +10,29 @@ export interface TaskItem {
   order: number;
 }
 
+export interface CompletedTaskItem {
+  id: string;
+  title: string;
+  category: string;
+  theme: string;
+  dueDate: string | null;
+  comments: string[];
+  completedAt: string; // ISO 8601 string
+}
+
+export interface ArchivedTheme {
+  theme: string;
+  archivedAt: string;
+  tasks: CompletedTaskItem[];
+}
+
+export interface ArchiveData {
+  version: number;
+  updatedAt: string;
+  archivedThemes: ArchivedTheme[];
+  archivedTasks: CompletedTaskItem[];
+}
+
 export type LineType = 'section' | 'task' | 'comment' | 'empty';
 
 export interface FormattedLine {

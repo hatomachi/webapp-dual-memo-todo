@@ -1,5 +1,6 @@
 import React from 'react';
 import { SectionItem, PaneType } from '../types/todo';
+import { Archive, CheckCircle2 } from 'lucide-react';
 
 interface SectionNavProps {
   sections: SectionItem[];
@@ -7,6 +8,9 @@ interface SectionNavProps {
   isOpen: boolean;
   onToggleOpen: () => void;
   onSelectSection: (charIndex: number, lineIndex: number) => void;
+  completedCounts?: Record<string, number>;
+  onOpenCompletedDrawer?: (themeName: string) => void;
+  onArchiveTheme?: (themeName: string) => void;
 }
 
 export const SectionNav: React.FC<SectionNavProps> = ({
@@ -15,6 +19,9 @@ export const SectionNav: React.FC<SectionNavProps> = ({
   isOpen,
   onToggleOpen,
   onSelectSection,
+  completedCounts = {},
+  onOpenCompletedDrawer,
+  onArchiveTheme,
 }) => {
   const accentColor = paneType === 'category' ? 'text-emerald-600' : 'text-blue-600';
   const headerBg = paneType === 'category' ? 'bg-emerald-50/50' : 'bg-blue-50/50';
@@ -92,32 +99,72 @@ export const SectionNav: React.FC<SectionNavProps> = ({
                 ? 'pl-6 text-slate-500'
                 : 'pl-8 text-slate-500';
 
-            return (
-              <button
-                key={`${sec.raw}-${idx}`}
-                onClick={() => onSelectSection(sec.charIndex, sec.lineIndex)}
-                title={`${sec.raw} (行 ${sec.lineIndex + 1})`}
-                type="button"
-                className={`w-full text-left py-1 pr-1.5 rounded transition-colors hover:bg-slate-200/70 flex items-center gap-1 group ${paddingClass}`}
-              >
-                {/* Icon / Bullet */}
-                {isRoot ? (
-                  sec.isDefault ? (
-                    <span className="text-slate-400 text-[10px] flex-shrink-0">📥</span>
-                  ) : (
-                    <span className="text-amber-600 text-[10px] flex-shrink-0">📁</span>
-                  )
-                ) : (
-                  <span className="text-slate-300 group-hover:text-slate-400 text-[10px] font-mono flex-shrink-0">
-                    └
-                  </span>
-                )}
+            const count = completedCounts[sec.raw] || 0;
 
-                {/* Section Display Name */}
-                <span className="truncate text-[11px] group-hover:text-slate-900">
-                  {sec.displayName}
-                </span>
-              </button>
+            return (
+              <div
+                key={`${sec.raw}-${idx}`}
+                className={`w-full py-0.5 pr-1 rounded transition-colors hover:bg-slate-200/70 flex items-center justify-between gap-1 group ${paddingClass}`}
+              >
+                <button
+                  type="button"
+                  onClick={() => onSelectSection(sec.charIndex, sec.lineIndex)}
+                  title={`${sec.raw} (行 ${sec.lineIndex + 1})`}
+                  className="flex items-center gap-1 min-w-0 flex-1 text-left cursor-pointer"
+                >
+                  {/* Icon / Bullet */}
+                  {isRoot ? (
+                    sec.isDefault ? (
+                      <span className="text-slate-400 text-[10px] flex-shrink-0">📥</span>
+                    ) : (
+                      <span className="text-amber-600 text-[10px] flex-shrink-0">📁</span>
+                    )
+                  ) : (
+                    <span className="text-slate-300 group-hover:text-slate-400 text-[10px] font-mono flex-shrink-0">
+                      └
+                    </span>
+                  )}
+
+                  {/* Section Display Name */}
+                  <span className="truncate text-[11px] group-hover:text-slate-900">
+                    {sec.displayName}
+                  </span>
+                </button>
+
+                {/* Right Actions: Completed Count Badge & Archive Icon (for theme pane) */}
+                {paneType === 'theme' && (
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {count > 0 && onOpenCompletedDrawer && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenCompletedDrawer(sec.raw);
+                        }}
+                        title={`テーマ「${sec.raw}」の完了タスク (${count}件) を表示`}
+                        className="flex items-center gap-0.5 text-[9px] font-mono font-bold text-emerald-700 bg-emerald-100/90 hover:bg-emerald-200 px-1 py-0.2 rounded cursor-pointer transition-colors"
+                      >
+                        <CheckCircle2 className="w-2.5 h-2.5" />
+                        <span>{count}</span>
+                      </button>
+                    )}
+
+                    {!sec.isDefault && onArchiveTheme && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onArchiveTheme(sec.raw);
+                        }}
+                        title={`テーマ「${sec.raw}」をアーカイブ`}
+                        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-amber-700 p-0.5 rounded hover:bg-amber-100/60 transition-all cursor-pointer"
+                      >
+                        <Archive className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             );
           })
         )}
