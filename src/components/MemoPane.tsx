@@ -20,13 +20,18 @@ import {
 import {
   InlineTagInfo,
   SuggestionTrigger,
+  HierarchicalOption,
+  UnifiedSuggestItem,
+  getUnifiedSuggestItems,
   parseLineInlineTags,
   splitLineIntoTokens,
   removeTagFromLine,
   replaceTagInLine,
   detectSuggestionTrigger,
 } from '../utils/tagHelper';
+import { getCaretCoordinates } from '../utils/caretCoordinates';
 import { SectionNav } from './SectionNav';
+import { InlineSuggestPopover } from './InlineSuggestPopover';
 
 export interface MemoPaneHandle {
   insertText: (before: string, after?: string) => void;
@@ -56,6 +61,10 @@ interface MemoPaneProps {
   onBlur: () => void;
   onActiveLineTagsChange?: (tags: InlineTagInfo[]) => void;
   onSuggestionTrigger?: (trigger: SuggestionTrigger | null) => void;
+  suggestionTrigger?: SuggestionTrigger | null;
+  categoryOptions?: HierarchicalOption[];
+  themeOptions?: HierarchicalOption[];
+  onOpenCalendar?: () => void;
 }
 
 const NAVIGATION_KEYS = new Set([
@@ -88,6 +97,10 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       onBlur,
       onActiveLineTagsChange,
       onSuggestionTrigger,
+      suggestionTrigger = null,
+      categoryOptions = [],
+      themeOptions = [],
+      onOpenCalendar,
     },
     ref
   ) => {
@@ -95,10 +108,36 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
     const [scrollbarWidth, setScrollbarWidth] = useState<number>(0);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const backdropRef = useRef<HTMLDivElement>(null);
+    const notepadContainerRef = useRef<HTMLDivElement>(null);
+
+    // Caret coordinates for inline floating suggest popover
+    const [caretCoords, setCaretCoords] = useState<{ top: number; left: number; height: number }>({
+      top: 10,
+      left: 16,
+      height: 20,
+    });
+    const [suggestIndex, setSuggestIndex] = useState<number>(0);
+
+    // Desktop mode detection
+    const isDesktop =
+      !isKeyboardOpen && typeof window !== 'undefined' && window.innerWidth >= 640;
 
     const sections = useMemo(() => {
       return extractSectionsFromText(text, type);
     }, [text, type]);
+
+    // Update caret coordinates relative to visible notepad area
+    const updateCaretCoordinates = useCallback(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      const pos = textarea.selectionStart ?? 0;
+      const coords = getCaretCoordinates(textarea, pos);
+      setCaretCoords({
+        top: coords.top - textarea.scrollTop,
+        left: coords.left - textarea.scrollLeft,
+        height: coords.height,
+      });
+    }, []);
 
     // Keep backdrop scroll in exact 1:1 sync with native textarea scroll
     // Also mirrors any rubber-band stretch via translateY so decorations never detach
@@ -126,7 +165,8 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
         }
       }
       backdrop.scrollLeft = textarea.scrollLeft;
-    }, []);
+      updateCaretCoordinates();
+    }, [updateCaretCoordinates]);
 
     // Prevent rubber-banding / bounce at scroll boundaries (both wheel and touch)
     useEffect(() => {
@@ -265,6 +305,21 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       return () => cancelAnimationFrame(raf);
     }, [isKeyboardOpen, ensureCaretVisible, syncBackdropScroll]);
 
+    // Reset suggest index when suggestion trigger query or type changes
+    useEffect(() => {
+      setSuggestIndex(0);
+    }, [suggestionTrigger?.query, suggestionTrigger?.type]);
+
+    // Unified suggestion candidate list for this pane
+    const suggestItems = useMemo<UnifiedSuggestItem[]>(() => {
+      if (!suggestionTrigger) return [];
+      return getUnifiedSuggestItems(
+        suggestionTrigger,
+        categoryOptions,
+        themeOptions
+      );
+    }, [suggestionTrigger, categoryOptions, themeOptions]);
+
     // Update cursor information, detect tags in active line, and detect suggestion trigger
     const updateCursorState = useCallback(() => {
       const textarea = textareaRef.current;
@@ -285,7 +340,75 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       // 2. Suggestion trigger at cursor
       const trigger = detectSuggestionTrigger(currentLine, col);
       onSuggestionTrigger?.(trigger);
-    }, [onActiveLineTagsChange, onSuggestionTrigger]);
+
+      // 3. Update caret pixel coordinates for inline suggest popover
+      updateCaretCoordinates();
+    }, [onActiveLineTagsChange, onSuggestionTrigger, updateCaretCoordinates]);
+
+    // Core suggestion application logic
+    const applySuggestion = useCallback(
+      (suggestedValue: string, trigger: SuggestionTrigger) => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+
+        const caretPos = textarea.selectionEnd ?? text.length;
+        const val = text;
+        const lineStart = val.lastIndexOf('\n', caretPos - 1) + 1;
+
+        const replaceStartGlobal = lineStart + trigger.replaceStart;
+        const replaceEndGlobal = lineStart + trigger.replaceEnd;
+
+        let effectiveReplaceEndGlobal = replaceEndGlobal;
+        const isDrillDown = suggestedValue.endsWith(':');
+
+        let replacement = '';
+        if (trigger.type === 'category') {
+          replacement = `!${suggestedValue}${isDrillDown ? '' : ' '}`;
+          // If finalized category and followed by space, consume 1 space to avoid double spacing
+          if (!isDrillDown) {
+            const afterText = val.substring(replaceEndGlobal);
+            const match = afterText.match(/^[ 　]/);
+            if (match) {
+              effectiveReplaceEndGlobal += match[0].length;
+            }
+          }
+        } else if (trigger.type === 'theme') {
+          replacement = `[${suggestedValue}${isDrillDown ? '' : '] '}`;
+          // Smart Auto-Consume: if finalized theme and cursor is immediately followed by ']' or '］',
+          // consume that closing bracket (and any following space) so ']' doesn't become redundant.
+          if (!isDrillDown) {
+            const afterText = val.substring(replaceEndGlobal);
+            const match = afterText.match(/^[\]］][ 　]?/);
+            if (match) {
+              effectiveReplaceEndGlobal += match[0].length;
+            }
+          }
+        } else if (trigger.type === 'date') {
+          replacement = `#${suggestedValue} `;
+          const afterText = val.substring(replaceEndGlobal);
+          const match = afterText.match(/^([0-9/]+)?[ 　]?/);
+          if (match && match[0]) {
+            effectiveReplaceEndGlobal += match[0].length;
+          }
+        }
+
+        const newText =
+          val.substring(0, replaceStartGlobal) +
+          replacement +
+          val.substring(effectiveReplaceEndGlobal);
+        onChangeText(newText);
+
+        const targetCursor = replaceStartGlobal + replacement.length;
+        requestAnimationFrame(() => {
+          textarea.focus({ preventScroll: true });
+          textarea.setSelectionRange(targetCursor, targetCursor);
+          syncBackdropScroll();
+          ensureCaretVisible();
+          updateCursorState();
+        });
+      },
+      [text, onChangeText, syncBackdropScroll, ensureCaretVisible, updateCursorState]
+    );
 
     // Expose manipulation methods to parent (for QuickToolbar)
     useImperativeHandle(ref, () => ({
@@ -498,57 +621,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       },
 
       applySuggestionAtCursor: (suggestedValue: string, trigger: SuggestionTrigger) => {
-        const textarea = textareaRef.current;
-        if (!textarea) return;
-
-        const caretPos = textarea.selectionEnd ?? text.length;
-        const val = text;
-        const lineStart = val.lastIndexOf('\n', caretPos - 1) + 1;
-
-        const replaceStartGlobal = lineStart + trigger.replaceStart;
-        const replaceEndGlobal = lineStart + trigger.replaceEnd;
-
-        let effectiveReplaceEndGlobal = replaceEndGlobal;
-        const isDrillDown = suggestedValue.endsWith(':');
-
-        let replacement = '';
-        if (trigger.type === 'category') {
-          replacement = `!${suggestedValue}${isDrillDown ? '' : ' '}`;
-          // If finalized category and followed by space, consume 1 space to avoid double spacing
-          if (!isDrillDown) {
-            const afterText = val.substring(replaceEndGlobal);
-            const match = afterText.match(/^[ 　]/);
-            if (match) {
-              effectiveReplaceEndGlobal += match[0].length;
-            }
-          }
-        } else {
-          replacement = `[${suggestedValue}${isDrillDown ? '' : '] '}`;
-          // Smart Auto-Consume: if finalized theme and cursor is immediately followed by ']' or '］',
-          // consume that closing bracket (and any following space) so ']' doesn't become redundant.
-          if (!isDrillDown) {
-            const afterText = val.substring(replaceEndGlobal);
-            const match = afterText.match(/^[\]］][ 　]?/);
-            if (match) {
-              effectiveReplaceEndGlobal += match[0].length;
-            }
-          }
-        }
-
-        const newText =
-          val.substring(0, replaceStartGlobal) +
-          replacement +
-          val.substring(effectiveReplaceEndGlobal);
-        onChangeText(newText);
-
-        const targetCursor = replaceStartGlobal + replacement.length;
-        requestAnimationFrame(() => {
-          textarea.focus({ preventScroll: true });
-          textarea.setSelectionRange(targetCursor, targetCursor);
-          syncBackdropScroll();
-          ensureCaretVisible();
-          updateCursorState();
-        });
+        applySuggestion(suggestedValue, trigger);
       },
     }));
 
@@ -584,6 +657,47 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
         e.stopPropagation();
         onCommitChange(type);
         return;
+      }
+
+      // Keyboard navigation for Inline Suggestion Popover (Desktop mode)
+      if (isDesktop && suggestionTrigger && suggestItems.length > 0) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          e.stopPropagation();
+          setSuggestIndex((prev) => (prev + 1) % suggestItems.length);
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          e.stopPropagation();
+          setSuggestIndex(
+            (prev) => (prev - 1 + suggestItems.length) % suggestItems.length
+          );
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          e.stopPropagation();
+          const selectedItem = suggestItems[suggestIndex] || suggestItems[0];
+          if (selectedItem) {
+            if (selectedItem.isAction && selectedItem.type === 'calendar') {
+              onOpenCalendar?.();
+              onSuggestionTrigger?.(null);
+            } else {
+              applySuggestion(selectedItem.raw, suggestionTrigger);
+              if (!selectedItem.raw.endsWith(':')) {
+                onSuggestionTrigger?.(null);
+              }
+            }
+          }
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          onSuggestionTrigger?.(null);
+          return;
+        }
       }
 
       // Overtype / Skip closing bracket ']' if cursor is right before ']'
@@ -753,7 +867,10 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
           </div>
 
           {/* Native Scrollable Notepad Area */}
-          <div className="relative flex-1 min-h-0 h-full overflow-hidden bg-white">
+          <div
+            ref={notepadContainerRef}
+            className="relative flex-1 min-h-0 h-full overflow-hidden bg-white"
+          >
             {/* Backdrop Layer (mirrors textarea scroll and content padding) */}
             <div
               ref={backdropRef}
@@ -879,6 +996,32 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
               autoCorrect="off"
               className="notepad-layer absolute inset-0 w-full h-full overflow-y-auto overflow-x-hidden pt-2.5 pb-16 pl-3 sm:pl-4 pr-3 sm:pr-4 text-transparent caret-slate-800 selection:bg-blue-500/25 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-300"
             />
+
+            {/* Inline Floating Suggestion Popover (Desktop only) */}
+            {isDesktop && suggestionTrigger && (
+              <InlineSuggestPopover
+                isOpen={true}
+                trigger={suggestionTrigger}
+                categoryOptions={categoryOptions}
+                themeOptions={themeOptions}
+                caretCoordinates={caretCoords}
+                containerWidth={notepadContainerRef.current?.clientWidth || 500}
+                containerHeight={notepadContainerRef.current?.clientHeight || 400}
+                selectedIndex={suggestIndex}
+                onSelectIndexChange={setSuggestIndex}
+                onSelect={(val) => {
+                  applySuggestion(val, suggestionTrigger);
+                  if (!val.endsWith(':')) {
+                    onSuggestionTrigger?.(null);
+                  }
+                }}
+                onOpenCalendar={() => {
+                  onOpenCalendar?.();
+                  onSuggestionTrigger?.(null);
+                }}
+                onClose={() => onSuggestionTrigger?.(null)}
+              />
+            )}
           </div>
         </div>
       </div>

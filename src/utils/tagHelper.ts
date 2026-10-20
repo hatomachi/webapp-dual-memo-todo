@@ -1,4 +1,5 @@
 import { DUE_DATE_REGEX, isCommentLine, isCategoryHeader, isThemeHeader, isEmptyLine } from './parser';
+import { getQuickDateSuggestions } from './dateHelper';
 
 export type InlineTagType = 'date' | 'theme' | 'category';
 
@@ -165,8 +166,10 @@ export const replaceTagInLine = (
   return `${before}${newRawTag}${after}`;
 };
 
+export type SuggestionType = 'category' | 'theme' | 'date';
+
 export interface SuggestionTrigger {
-  type: 'category' | 'theme';
+  type: SuggestionType;
   query: string;
   triggerChar: string;
   replaceStart: number;
@@ -175,7 +178,7 @@ export interface SuggestionTrigger {
 
 /**
  * Detect if the cursor is currently in a position where a suggestion palette should open.
- * e.g. after '!' or '[' on the current line.
+ * e.g. after '!', '[', or '#' on the current line.
  */
 export const detectSuggestionTrigger = (
   line: string,
@@ -199,8 +202,20 @@ export const detectSuggestionTrigger = (
     textBeforeCursor.lastIndexOf('［')
   );
 
-  // If theme trigger is after any closing bracket
-  if (lastBracket !== -1 && lastBracket > lastExcl) {
+  // Check for date trigger: #word or ＃word
+  const lastHash = Math.max(
+    textBeforeCursor.lastIndexOf('#'),
+    textBeforeCursor.lastIndexOf('＃')
+  );
+
+  // Find the closest trigger character to the cursor
+  const maxTriggerIdx = Math.max(lastBracket, lastExcl, lastHash);
+  if (maxTriggerIdx === -1) {
+    return null;
+  }
+
+  // 1. Theme trigger: [
+  if (maxTriggerIdx === lastBracket) {
     const afterBracket = textBeforeCursor.substring(lastBracket + 1);
     if (!afterBracket.includes(']') && !afterBracket.includes('］') && !afterBracket.includes('\n')) {
       return {
@@ -213,8 +228,8 @@ export const detectSuggestionTrigger = (
     }
   }
 
-  // If category trigger is preceded by start-of-line or whitespace
-  if (lastExcl !== -1) {
+  // 2. Category trigger: !
+  if (maxTriggerIdx === lastExcl) {
     const charBeforeExcl = lastExcl > 0 ? textBeforeCursor[lastExcl - 1] : ' ';
     if (charBeforeExcl === ' ' || charBeforeExcl === '　' || lastExcl === 0) {
       const afterExcl = textBeforeCursor.substring(lastExcl + 1);
@@ -224,6 +239,31 @@ export const detectSuggestionTrigger = (
           query: afterExcl,
           triggerChar: textBeforeCursor[lastExcl],
           replaceStart: lastExcl,
+          replaceEnd: col,
+        };
+      }
+    }
+  }
+
+  // 3. Date trigger: #
+  if (maxTriggerIdx === lastHash) {
+    const charBeforeHash = lastHash > 0 ? textBeforeCursor[lastHash - 1] : ' ';
+    if (charBeforeHash === ' ' || charBeforeHash === '　' || lastHash === 0) {
+      const afterHash = textBeforeCursor.substring(lastHash + 1);
+      // Valid date query doesn't contain spaces, line breaks, brackets, or other tag chars
+      if (
+        !afterHash.includes(' ') &&
+        !afterHash.includes('　') &&
+        !afterHash.includes('\n') &&
+        !afterHash.includes('[') &&
+        !afterHash.includes(']') &&
+        !afterHash.includes('!')
+      ) {
+        return {
+          type: 'date',
+          query: afterHash,
+          triggerChar: textBeforeCursor[lastHash],
+          replaceStart: lastHash,
           replaceEnd: col,
         };
       }
@@ -294,4 +334,127 @@ export const extractHierarchicalOptions = (
       hasChildren,
     };
   });
+};
+
+export interface UnifiedSuggestItem {
+  id: string;
+  type: 'category' | 'theme' | 'date' | 'calendar' | 'create';
+  raw: string;
+  primaryLabel: string;
+  secondaryLabel?: string;
+  isAction?: boolean;
+}
+
+/**
+ * Generate unified suggestions for inline popover or quick palettes
+ */
+export const getUnifiedSuggestItems = (
+  trigger: SuggestionTrigger,
+  categoryOptions: HierarchicalOption[],
+  themeOptions: HierarchicalOption[]
+): UnifiedSuggestItem[] => {
+  const trimmedQuery = trigger.query.trim();
+  const lowerQuery = trimmedQuery.toLowerCase();
+
+  // 1. DATE trigger (#)
+  if (trigger.type === 'date') {
+    const dateSuggestions = getQuickDateSuggestions();
+    const list: UnifiedSuggestItem[] = [];
+
+    // Calendar Modal Action item
+    list.push({
+      id: 'action-calendar',
+      type: 'calendar',
+      raw: '',
+      primaryLabel: 'カレンダーから選択...',
+      secondaryLabel: '日付ピッカーを開く',
+      isAction: true,
+    });
+
+    // Filter and map date suggestions
+    for (const ds of dateSuggestions) {
+      if (
+        !lowerQuery ||
+        ds.label.toLowerCase().includes(lowerQuery) ||
+        ds.dateStr.includes(lowerQuery) ||
+        ds.subLabel.includes(lowerQuery)
+      ) {
+        list.push({
+          id: `date-${ds.id}`,
+          type: 'date',
+          raw: ds.dateStr,
+          primaryLabel: ds.label,
+          secondaryLabel: `#${ds.subLabel}`,
+        });
+      }
+    }
+
+    // If user typed custom digits like "11/05" or "12"
+    if (trimmedQuery && /^\d{1,2}(\/\d{1,2})?$/.test(trimmedQuery)) {
+      const isAlreadyInList = list.some((i) => i.raw === trimmedQuery);
+      if (!isAlreadyInList) {
+        list.push({
+          id: `date-custom-${trimmedQuery}`,
+          type: 'date',
+          raw: trimmedQuery,
+          primaryLabel: `#${trimmedQuery}`,
+          secondaryLabel: '入力した日付',
+        });
+      }
+    }
+
+    return list;
+  }
+
+  // 2. THEME ([) or CATEGORY (!) trigger
+  const rawOptions = trigger.type === 'category' ? categoryOptions : themeOptions;
+
+  let filtered: HierarchicalOption[] = [];
+  if (!trimmedQuery) {
+    filtered = rawOptions;
+  } else if (trimmedQuery.includes(':')) {
+    const parts = trimmedQuery.split(':');
+    const parentQuery = parts[0].toLowerCase();
+    const childQuery = parts.slice(1).join(':').toLowerCase();
+
+    filtered = rawOptions.filter((opt) => {
+      const optLower = opt.raw.toLowerCase();
+      if (!optLower.startsWith(`${parentQuery}:`)) return false;
+      if (!childQuery) return true;
+      const optChild = opt.raw.substring(parentQuery.length + 1).toLowerCase();
+      return optChild.includes(childQuery);
+    });
+  } else {
+    filtered = rawOptions.filter((opt) => {
+      return (
+        opt.raw.toLowerCase().includes(lowerQuery) ||
+        opt.displayName.toLowerCase().includes(lowerQuery)
+      );
+    });
+  }
+
+  const list: UnifiedSuggestItem[] = filtered.map((opt) => ({
+    id: `opt-${opt.raw}`,
+    type: trigger.type === 'category' ? 'category' : 'theme',
+    raw: opt.raw,
+    primaryLabel: opt.displayName,
+    secondaryLabel: opt.parent ? `${opt.parent} ›` : undefined,
+  }));
+
+  // If query does not exactly match any existing option, show "Create new"
+  const exactMatch = rawOptions.some(
+    (o) => o.raw.toLowerCase() === lowerQuery
+  );
+  if (trimmedQuery.length > 0 && !exactMatch) {
+    list.push({
+      id: `create-new-${trimmedQuery}`,
+      type: 'create',
+      raw: trimmedQuery,
+      primaryLabel:
+        trigger.type === 'category' ? `!${trimmedQuery}` : `[${trimmedQuery}]`,
+      secondaryLabel: '新規作成',
+    });
+  }
+
+  return list;
 };

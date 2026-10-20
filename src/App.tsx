@@ -692,6 +692,10 @@ export const App: React.FC = () => {
   }, [dirtyPane, focusedPane, activeMobilePane, handleCommitChange]);
 
   const viewport = useVisualViewport();
+  const isDesktop =
+    !viewport.isKeyboardOpen &&
+    typeof window !== 'undefined' &&
+    window.innerWidth >= 640;
 
   return (
     <div
@@ -760,6 +764,14 @@ export const App: React.FC = () => {
               onBlur={() => setFocusedPane(null)}
               onActiveLineTagsChange={(tags) => setActiveLineTags(tags)}
               onSuggestionTrigger={(trig) => setSuggestionTrigger(trig)}
+              suggestionTrigger={
+                focusedPane === 'category' || (!focusedPane && activeMobilePane === 'category')
+                  ? suggestionTrigger
+                  : null
+              }
+              categoryOptions={categoryOptions}
+              themeOptions={themeOptions}
+              onOpenCalendar={handleOpenCalendar}
             />
           </div>
 
@@ -787,6 +799,14 @@ export const App: React.FC = () => {
               onBlur={() => setFocusedPane(null)}
               onActiveLineTagsChange={(tags) => setActiveLineTags(tags)}
               onSuggestionTrigger={(trig) => setSuggestionTrigger(trig)}
+              suggestionTrigger={
+                focusedPane === 'theme' || (!focusedPane && activeMobilePane === 'theme')
+                  ? suggestionTrigger
+                  : null
+              }
+              categoryOptions={categoryOptions}
+              themeOptions={themeOptions}
+              onOpenCalendar={handleOpenCalendar}
             />
           </div>
         </div>
@@ -819,7 +839,7 @@ export const App: React.FC = () => {
             });
           }
         }}
-        suggestionTrigger={suggestionTrigger}
+        suggestionTrigger={isDesktop ? null : suggestionTrigger}
         categoryOptions={categoryOptions}
         themeOptions={themeOptions}
         onSelectSuggestion={(val) => {

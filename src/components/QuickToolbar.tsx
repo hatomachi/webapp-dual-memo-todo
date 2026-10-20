@@ -131,33 +131,46 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
   return (
     <div className="flex flex-col flex-shrink-0 z-20">
       {/* 1. Tag Suggestion Palette (triggered by '!' or '[' at cursor) */}
-      {suggestionTrigger && onSelectSuggestion && onCloseSuggestion && (
-        <TagSuggestPalette
-          isOpen={true}
-          type={suggestionTrigger.type}
-          query={suggestionTrigger.query}
-          options={suggestionTrigger.type === 'category' ? categoryOptions : themeOptions}
-          onSelect={onSelectSuggestion}
-          onClose={onCloseSuggestion}
-        />
-      )}
+      {suggestionTrigger &&
+        (suggestionTrigger.type === 'category' || suggestionTrigger.type === 'theme') &&
+        onSelectSuggestion &&
+        onCloseSuggestion && (
+          <TagSuggestPalette
+            isOpen={true}
+            type={suggestionTrigger.type}
+            query={suggestionTrigger.query}
+            options={suggestionTrigger.type === 'category' ? categoryOptions : themeOptions}
+            onSelect={onSelectSuggestion}
+            onClose={onCloseSuggestion}
+          />
+        )}
 
-      {/* 2. Quick Date Palette (slides over just above the toolbar on '#' click) */}
+      {/* 2. Quick Date Palette (slides over just above the toolbar on '#' click or '#' trigger) */}
       <QuickDatePalette
-        isOpen={isDatePaletteOpen}
+        isOpen={isDatePaletteOpen || suggestionTrigger?.type === 'date'}
         onSelectDate={(dateStr) => {
-          onInsertDueDate(dateStr);
+          if (suggestionTrigger?.type === 'date' && onSelectSuggestion) {
+            onSelectSuggestion(dateStr);
+          } else {
+            onInsertDueDate(dateStr);
+          }
           setIsDatePaletteOpen(false);
+          onCloseSuggestion?.();
         }}
         onOpenCalendar={() => {
           setIsDatePaletteOpen(false);
+          onCloseSuggestion?.();
           onOpenCalendar();
         }}
         onInsertRawHash={() => {
           onInsertText('#');
           setIsDatePaletteOpen(false);
+          onCloseSuggestion?.();
         }}
-        onClose={() => setIsDatePaletteOpen(false)}
+        onClose={() => {
+          setIsDatePaletteOpen(false);
+          onCloseSuggestion?.();
+        }}
       />
 
       {/* 3. Active Line Tag Pills (shows tags in current cursor line with 1-tap delete) */}
