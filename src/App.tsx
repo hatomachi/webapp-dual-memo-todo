@@ -678,10 +678,6 @@ export const App: React.FC = () => {
     setIsCalendarOpen(true);
   };
 
-  const handleQuickToggleNav = () => {
-    getActivePaneHandle()?.toggleNav();
-  };
-
   // Global Ctrl+S fallback
   useEffect(() => {
     const onGlobalKeyDown = (e: KeyboardEvent) => {
@@ -798,32 +794,14 @@ export const App: React.FC = () => {
 
       {/* Quick Toolbar (Always visible on mobile bottom or desktop bottom helper) */}
       <QuickToolbar
-        activePane={dirtyPane || focusedPane || activeMobilePane}
-        onTogglePane={() => {
-          const nextPane = activeMobilePane === 'category' ? 'theme' : 'category';
-          setActiveMobilePane(nextPane);
-          requestAnimationFrame(() => {
-            if (nextPane === 'theme') {
-              themePaneRef.current?.focus();
-            } else {
-              categoryPaneRef.current?.focus();
-            }
-          });
-        }}
         onInsertText={handleQuickInsertText}
         onInsertIndentComment={handleQuickInsertIndent}
         onInsertDueDate={handleQuickInsertDueDate}
         onOpenCalendar={handleOpenCalendar}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
         onCommit={() => {
           const targetPane = dirtyPane || focusedPane || activeMobilePane;
           handleCommitChange(targetPane);
         }}
-        onSortDueDates={handleSortDueDates}
-        onToggleSectionNav={handleQuickToggleNav}
         isDirty={dirtyPane !== null}
         isKeyboardOpen={viewport.isKeyboardOpen}
         activeLineTags={activeLineTags}
