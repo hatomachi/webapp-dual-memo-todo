@@ -508,19 +508,37 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
         const replaceStartGlobal = lineStart + trigger.replaceStart;
         const replaceEndGlobal = lineStart + trigger.replaceEnd;
 
+        let effectiveReplaceEndGlobal = replaceEndGlobal;
+        const isDrillDown = suggestedValue.endsWith(':');
+
         let replacement = '';
         if (trigger.type === 'category') {
-          const isDrillDown = suggestedValue.endsWith(':');
           replacement = `!${suggestedValue}${isDrillDown ? '' : ' '}`;
+          // If finalized category and followed by space, consume 1 space to avoid double spacing
+          if (!isDrillDown) {
+            const afterText = val.substring(replaceEndGlobal);
+            const match = afterText.match(/^[ 　]/);
+            if (match) {
+              effectiveReplaceEndGlobal += match[0].length;
+            }
+          }
         } else {
-          const isDrillDown = suggestedValue.endsWith(':');
           replacement = `[${suggestedValue}${isDrillDown ? '' : '] '}`;
+          // Smart Auto-Consume: if finalized theme and cursor is immediately followed by ']' or '］',
+          // consume that closing bracket (and any following space) so ']' doesn't become redundant.
+          if (!isDrillDown) {
+            const afterText = val.substring(replaceEndGlobal);
+            const match = afterText.match(/^[\]］][ 　]?/);
+            if (match) {
+              effectiveReplaceEndGlobal += match[0].length;
+            }
+          }
         }
 
         const newText =
           val.substring(0, replaceStartGlobal) +
           replacement +
-          val.substring(replaceEndGlobal);
+          val.substring(effectiveReplaceEndGlobal);
         onChangeText(newText);
 
         const targetCursor = replaceStartGlobal + replacement.length;
@@ -566,6 +584,22 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
         e.stopPropagation();
         onCommitChange(type);
         return;
+      }
+
+      // Overtype / Skip closing bracket ']' if cursor is right before ']'
+      if ((e.key === ']' || e.key === '］') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const textarea = textareaRef.current;
+        if (textarea && textarea.selectionStart === textarea.selectionEnd) {
+          const pos = textarea.selectionStart;
+          const nextChar = textarea.value.charAt(pos);
+          if (nextChar === ']' || nextChar === '］') {
+            e.preventDefault();
+            const targetPos = pos + 1;
+            textarea.setSelectionRange(targetPos, targetPos);
+            updateCursorState();
+            return;
+          }
+        }
       }
 
       if (e.key === 'Tab') {
