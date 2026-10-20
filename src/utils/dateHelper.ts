@@ -4,6 +4,13 @@
 
 export type DueDateStatus = 'overdue' | 'today' | 'future' | 'none';
 
+export interface ResolvedDueDate {
+  year: number;
+  month: number;
+  day: number;
+  date: Date;
+}
+
 export interface DateSuggestion {
   id: string;
   label: string; // e.g. "今日", "明日", "今週金", "来週月"
@@ -12,6 +19,112 @@ export interface DateSuggestion {
   fullDateStr: string; // e.g. "2026/10/20"
   isToday?: boolean;
 }
+
+/**
+ * Parse and resolve a due date string (e.g. "10/20", "1/11", "2026/10/20", "2027-01-11", "27/1/11").
+ * When year is omitted (MM/DD), it smartly determines the most likely year based on baseDate:
+ * - Dates within overdueToleranceDays (default: 45 days) in the past are treated as this year's overdue tasks.
+ * - Dates further in the past (e.g. 1/11 when today is 10/20) are treated as upcoming tasks in the next year.
+ * - Dates in near past after year rollover (e.g. 12/28 when today is 1/5) are treated as last year's overdue tasks.
+ */
+export const resolveDueDate = (
+  dueDateStr: string,
+  baseDate: Date = new Date(),
+  overdueToleranceDays: number = 45
+): ResolvedDueDate | null => {
+  if (!dueDateStr) return null;
+  const cleanStr = dueDateStr.replace(/^[#＃]/, '').trim();
+  const parts = cleanStr.replace(/-/g, '/').split('/');
+
+  let explicitYear: number | null = null;
+  let month = 1;
+  let day = 1;
+
+  if (parts.length === 3) {
+    let y = parseInt(parts[0], 10);
+    if (isNaN(y)) return null;
+    // Support 2-digit years like 26/1/11 or 27/01/11
+    if (y < 100) {
+      y += 2000;
+    }
+    explicitYear = y;
+    month = parseInt(parts[1], 10);
+    day = parseInt(parts[2], 10);
+  } else if (parts.length === 2) {
+    month = parseInt(parts[0], 10);
+    day = parseInt(parts[1], 10);
+  } else {
+    return null;
+  }
+
+  if (
+    isNaN(month) ||
+    isNaN(day) ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31
+  ) {
+    return null;
+  }
+
+  if (explicitYear !== null) {
+    if (explicitYear < 1900 || explicitYear > 2200) {
+      return null;
+    }
+    const targetDate = new Date(explicitYear, month - 1, day);
+    if (targetDate.getMonth() !== month - 1 || targetDate.getDate() !== day) {
+      return null;
+    }
+    return {
+      year: explicitYear,
+      month,
+      day,
+      date: targetDate,
+    };
+  }
+
+  // Smart rolling year inference for MM/DD
+  const baseYear = baseDate.getFullYear();
+  const today = new Date(baseYear, baseDate.getMonth(), baseDate.getDate());
+  const oneDayMs = 1000 * 60 * 60 * 24;
+
+  // Candidate years: current year first, then next year, then previous year
+  const candidateYears = [baseYear, baseYear + 1, baseYear - 1];
+  let bestYear = baseYear;
+  let found = false;
+
+  for (const candYear of candidateYears) {
+    const candDate = new Date(candYear, month - 1, day);
+    if (candDate.getMonth() !== month - 1 || candDate.getDate() !== day) {
+      continue;
+    }
+
+    const diffDays = Math.round((candDate.getTime() - today.getTime()) / oneDayMs);
+    // Window: [-overdueToleranceDays, +(365 - overdueToleranceDays))
+    if (diffDays >= -overdueToleranceDays && diffDays < 365 - overdueToleranceDays) {
+      bestYear = candYear;
+      found = true;
+      break;
+    }
+  }
+
+  if (!found) {
+    const fallbackDate = new Date(baseYear, month - 1, day);
+    if (fallbackDate.getMonth() !== month - 1 || fallbackDate.getDate() !== day) {
+      return null;
+    }
+    bestYear = baseYear;
+  }
+
+  const finalDate = new Date(bestYear, month - 1, day);
+  return {
+    year: bestYear,
+    month,
+    day,
+    date: finalDate,
+  };
+};
 
 /**
  * Determine the status of a due date string (e.g. "10/20", "2026/10/20", "2026-10-20").
@@ -25,45 +138,11 @@ export const checkDueDateStatus = (
   dueDateStr: string,
   baseDate: Date = new Date()
 ): DueDateStatus => {
-  if (!dueDateStr) return 'none';
-  const cleanStr = dueDateStr.replace(/^[#＃]/, '').trim();
-  const parts = cleanStr.replace(/-/g, '/').split('/');
-
-  let year = baseDate.getFullYear();
-  let month = 1;
-  let day = 1;
-
-  if (parts.length === 3) {
-    year = parseInt(parts[0], 10);
-    month = parseInt(parts[1], 10);
-    day = parseInt(parts[2], 10);
-  } else if (parts.length === 2) {
-    month = parseInt(parts[0], 10);
-    day = parseInt(parts[1], 10);
-  } else {
-    return 'none';
-  }
-
-  if (
-    isNaN(year) ||
-    isNaN(month) ||
-    isNaN(day) ||
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > 31
-  ) {
-    return 'none';
-  }
-
-  const targetDate = new Date(year, month - 1, day);
-  // Verify date validity (e.g. avoid rolling Feb 31 to March 3)
-  if (targetDate.getMonth() !== month - 1 || targetDate.getDate() !== day) {
-    return 'none';
-  }
+  const resolved = resolveDueDate(dueDateStr, baseDate);
+  if (!resolved) return 'none';
 
   const today = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
-  const targetTime = targetDate.getTime();
+  const targetTime = resolved.date.getTime();
   const todayTime = today.getTime();
 
   if (targetTime < todayTime) {

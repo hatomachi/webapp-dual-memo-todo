@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, X, Calendar as CalendarIcon } from 'lucide-react';
-import { getCalendarMonthGrid, formatDateToMMDD } from '../utils/dateHelper';
+import { getCalendarMonthGrid, formatDateToMMDD, resolveDueDate } from '../utils/dateHelper';
 
 interface CalendarPickerModalProps {
   isOpen: boolean;
@@ -33,14 +33,11 @@ export const CalendarPickerModal: React.FC<CalendarPickerModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       if (selectedDateStr) {
-        const parts = selectedDateStr.split('/');
-        if (parts.length === 2) {
-          const m = parseInt(parts[0], 10) - 1;
-          if (!isNaN(m) && m >= 0 && m <= 11) {
-            setCurrentMonth(m);
-            setCurrentYear(today.getFullYear());
-            return;
-          }
+        const resolved = resolveDueDate(selectedDateStr, today);
+        if (resolved) {
+          setCurrentYear(resolved.year);
+          setCurrentMonth(resolved.month - 1);
+          return;
         }
       }
       setCurrentYear(today.getFullYear());

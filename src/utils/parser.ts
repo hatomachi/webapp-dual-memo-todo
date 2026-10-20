@@ -1,5 +1,5 @@
 import { TaskItem, PaneType, SectionItem } from '../types/todo';
-import { checkDueDateStatus, DueDateStatus } from './dateHelper';
+import { checkDueDateStatus, DueDateStatus, resolveDueDate } from './dateHelper';
 
 /**
  * Generate a short random ID
@@ -8,8 +8,8 @@ export const generateId = (): string => {
   return Math.random().toString(36).substring(2, 9) + Date.now().toString(36).substring(4);
 };
 
-// Date regex matching #MM/DD, #M/D, #YYYY/MM/DD, #YYYY-MM-DD (also full-width ＃)
-export const DUE_DATE_REGEX = /[#＃](?:(\d{4}[-/])?\d{1,2}[-/]\d{1,2})/;
+// Date regex matching #MM/DD, #M/D, #YYYY/MM/DD, #YY/MM/DD, #YYYY-MM-DD (also full-width ＃)
+export const DUE_DATE_REGEX = /[#＃](?:(?:\d{4}|\d{2})[-/])?\d{1,2}[-/]\d{1,2}/;
 // Theme tag matching [ThemeName] or ［ThemeName］ (also tolerates unclosed [ThemeName at end of line or before other tags)
 const THEME_TAG_REGEX = /[\[［]([^\[\]［］\n#＃!！]+?)(?:[\]］]|$)/;
 // Category tag matching !categoryName or ！categoryName
@@ -515,33 +515,22 @@ export const extractSectionsFromText = (
 
 /**
  * Compare two due dates in format MM/DD, YYYY/MM/DD, etc.
+ * Uses resolveDueDate for smart rolling year inference (e.g. 1/11 in October is sorted after 12/31).
  */
 export const compareDueDates = (d1: string | null, d2: string | null): number => {
   if (!d1 && !d2) return 0;
   if (!d1) return 1;
   if (!d2) return -1;
 
-  const parseToTimestamp = (dStr: string): number => {
-    const parts = dStr.replace(/-/g, '/').split('/');
-    const currentYear = new Date().getFullYear();
+  const now = new Date();
+  const res1 = resolveDueDate(d1, now);
+  const res2 = resolveDueDate(d2, now);
 
-    let y = currentYear;
-    let m = 1;
-    let d = 1;
+  if (!res1 && !res2) return 0;
+  if (!res1) return 1;
+  if (!res2) return -1;
 
-    if (parts.length === 3) {
-      y = parseInt(parts[0], 10) || currentYear;
-      m = parseInt(parts[1], 10) || 1;
-      d = parseInt(parts[2], 10) || 1;
-    } else if (parts.length === 2) {
-      m = parseInt(parts[0], 10) || 1;
-      d = parseInt(parts[1], 10) || 1;
-    }
-
-    return new Date(y, m - 1, d).getTime();
-  };
-
-  return parseToTimestamp(d1) - parseToTimestamp(d2);
+  return res1.date.getTime() - res2.date.getTime();
 };
 
 /**
