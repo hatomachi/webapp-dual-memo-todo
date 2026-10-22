@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { PaneType, TaskItem, CompletedTaskItem, ArchiveData } from './types/todo';
+import { PaneType, TaskItem, CompletedTaskItem, ArchiveData, StagingData } from './types/todo';
 import {
   parseCategoryText,
   parseThemeText,
@@ -43,6 +43,14 @@ import {
   fetchArchiveFromGitHubRepo,
   pushArchiveToGitHubRepo,
 } from './utils/archiveManager';
+import {
+  loadStagingData,
+  persistStagingData,
+  separateStagingTasks,
+  fetchStagingFromGitHubRepo,
+  pushStagingToGitHubRepo,
+  isStagingCategory,
+} from './utils/stagingManager';
 import { GitHubSettings, SyncStatus, RemotePayload } from './types/github';
 import {
   loadGitHubSettings,
@@ -116,6 +124,16 @@ export const App: React.FC = () => {
 
   // Archive data (frozen storage in todo-archive.json)
   const [archiveData, setArchiveData] = useState<ArchiveData>(loadArchiveData);
+
+  // Staging data (temporary staging storage in todo-staging.json)
+  const [stagingData, setStagingData] = useState<StagingData>(loadStagingData);
+  const stagingDataRef = useRef<StagingData>(stagingData);
+
+  const updateStagingData = (val: StagingData) => {
+    stagingDataRef.current = val;
+    setStagingData(val);
+    persistStagingData(val);
+  };
 
   // History state (30 generations undo/redo)
   const [historyState, setHistoryState] = useState<HistoryState>({
@@ -275,10 +293,28 @@ export const App: React.FC = () => {
           }
         }).catch(() => {});
 
+        // Fetch staging tasks from GitHub
+        let currentStaging = stagingDataRef.current;
+        try {
+          const remoteStaging = await fetchStagingFromGitHubRepo(settings);
+          if (remoteStaging) {
+            currentStaging = remoteStaging;
+            updateStagingData(remoteStaging);
+          }
+        } catch (e) {
+          console.warn('Failed to fetch remote staging:', e);
+        }
+
+        // Merge staging tasks with loadedTasks (avoiding duplicate IDs)
+        const loadedTaskIds = new Set(loadedTasks.map((t) => t.id));
+        const stagingTasksToMerge = currentStaging.tasks.filter((t) => !loadedTaskIds.has(t.id));
+        const combinedTasks = [...stagingTasksToMerge, ...loadedTasks];
+
         // Sort tasks globally by due date so both panes (categories and themes) are naturally ordered by due date
+        const sortedCombinedTasks = sortTasksByDueDate(combinedTasks);
         const sortedLoadedTasks = sortTasksByDueDate(loadedTasks);
-        const newCat = formatTasksToCategoryText(sortedLoadedTasks, loadedCats);
-        const newThm = formatTasksToThemeText(sortedLoadedTasks, loadedThms);
+        const newCat = formatTasksToCategoryText(sortedCombinedTasks, loadedCats);
+        const newThm = formatTasksToThemeText(sortedCombinedTasks, loadedThms);
 
         // If current text is already identical to remote, just mark success
         if (
@@ -294,7 +330,7 @@ export const App: React.FC = () => {
 
         // Only apply if user is still not dirty
         if (dirtyPaneRef.current === null) {
-          updateTasks(sortedLoadedTasks);
+          updateTasks(sortedCombinedTasks);
           updateCategories(loadedCats);
           updateThemes(loadedThms);
           updateCategoryText(newCat);
@@ -422,18 +458,25 @@ export const App: React.FC = () => {
       }
     }
 
-    // Sort tasks on startup by due date so both panes (category and theme) open in due date order
-    const sortedInitialT = initialT.length > 0 ? sortTasksByDueDate(initialT) : initialT;
-    const initialSortedCat = initialCat ? formatTasksToCategoryText(sortedInitialT, initialCats) : initialCat;
-    const initialSortedThm = initialThm ? formatTasksToThemeText(sortedInitialT, initialThms) : initialThm;
+    // Filter out staging tasks from main tasks storage if any
+    const mainInitialT = initialT.filter((t) => !isStagingCategory(t.category));
+    const mainTaskIds = new Set(mainInitialT.map((t) => t.id));
+    const stagingTasksToMerge = stagingDataRef.current.tasks.filter((t) => !mainTaskIds.has(t.id));
+    const combinedInitialTasks = [...stagingTasksToMerge, ...mainInitialT];
 
-    updateTasks(sortedInitialT);
+    // Sort tasks on startup by due date so both panes (category and theme) open in due date order
+    const sortedCombinedT = combinedInitialTasks.length > 0 ? sortTasksByDueDate(combinedInitialTasks) : combinedInitialTasks;
+    const sortedMainT = mainInitialT.length > 0 ? sortTasksByDueDate(mainInitialT) : mainInitialT;
+    const initialSortedCat = initialCat ? formatTasksToCategoryText(sortedCombinedT, initialCats) : initialCat;
+    const initialSortedThm = initialThm ? formatTasksToThemeText(sortedCombinedT, initialThms) : initialThm;
+
+    updateTasks(sortedCombinedT);
     updateCategories(initialCats);
     updateThemes(initialThms);
     updateCategoryText(initialSortedCat);
     updateThemeText(initialSortedThm);
-    if (initialT.length > 0) {
-      saveToStorage(sortedInitialT, initialSortedCat, initialSortedThm, initialCats, initialThms);
+    if (sortedMainT.length > 0) {
+      saveToStorage(sortedMainT, initialSortedCat, initialSortedThm, initialCats, initialThms);
     }
 
     // If history is empty, record initial state
@@ -502,8 +545,6 @@ export const App: React.FC = () => {
         updateTasks(newTasks);
         updateCategoryText(newCat);
         updateThemeText(newThm);
-        saveToStorage(newTasks, newCat, newThm, newCats, newThms, parsed.completedTasks);
-        showToast('💾 左 ➔ 右へ反映しました');
       } else {
         label = '右 ➔ 左 反映';
         const rawThm = themeTextRef.current;
@@ -523,8 +564,32 @@ export const App: React.FC = () => {
         updateTasks(newTasks);
         updateCategoryText(newCat);
         updateThemeText(newThm);
-        saveToStorage(newTasks, newCat, newThm, newCats, newThms, parsed.completedTasks);
-        showToast('💾 右 ➔ 左へ反映しました');
+      }
+
+      // Separate staging tasks for storage and GitHub push
+      const {
+        mainTasks,
+        updatedStaging,
+        promotedTasks,
+        hasStagingChanged,
+      } = separateStagingTasks(newTasks, stagingDataRef.current);
+
+      if (hasStagingChanged) {
+        updateStagingData(updatedStaging);
+        const settings = loadGitHubSettings();
+        if (settings && settings.autoSyncOnSave) {
+          pushStagingToGitHubRepo(settings, updatedStaging).catch((err) => {
+            console.warn('Failed to push updated staging to GitHub:', err);
+          });
+        }
+      }
+
+      saveToStorage(mainTasks, newCat, newThm, newCats, newThms);
+
+      if (promotedTasks.length > 0) {
+        showToast(`🚀 ${promotedTasks.length}件のタスクを本番へ昇格しました！`);
+      } else {
+        showToast(sourcePane === 'category' ? '💾 左 ➔ 右へ反映しました' : '💾 右 ➔ 左へ反映しました');
       }
 
       updateDirtyPane(null);
@@ -539,7 +604,7 @@ export const App: React.FC = () => {
       setHistoryState((prev) => addSnapshot(prev, label, newCat, newThm));
 
       // Trigger background GitHub push if configured
-      triggerBackgroundGitHubPush(newTasks, newCats, newThms, label);
+      triggerBackgroundGitHubPush(mainTasks, newCats, newThms, label);
     },
     [saveToStorage, triggerBackgroundGitHubPush]
   );
@@ -925,11 +990,28 @@ export const App: React.FC = () => {
           ? payload.themes
           : extractThemeSections(payload.themeText || '');
 
-      const sortedLoadedTasks = sortTasksByDueDate(loadedTasks);
-      const newCat = formatTasksToCategoryText(sortedLoadedTasks, loadedCats);
-      const newThm = formatTasksToThemeText(sortedLoadedTasks, loadedThms);
+      // Fetch staging tasks as well
+      let currentStaging = stagingDataRef.current;
+      try {
+        const remoteStaging = await fetchStagingFromGitHubRepo(settings);
+        if (remoteStaging) {
+          currentStaging = remoteStaging;
+          updateStagingData(remoteStaging);
+        }
+      } catch (e) {
+        console.warn('Failed to fetch remote staging:', e);
+      }
 
-      updateTasks(sortedLoadedTasks);
+      const loadedTaskIds = new Set(loadedTasks.map((t) => t.id));
+      const stagingTasksToMerge = currentStaging.tasks.filter((t) => !loadedTaskIds.has(t.id));
+      const combinedTasks = [...stagingTasksToMerge, ...loadedTasks];
+
+      const sortedCombinedTasks = sortTasksByDueDate(combinedTasks);
+      const sortedLoadedTasks = sortTasksByDueDate(loadedTasks);
+      const newCat = formatTasksToCategoryText(sortedCombinedTasks, loadedCats);
+      const newThm = formatTasksToThemeText(sortedCombinedTasks, loadedThms);
+
+      updateTasks(sortedCombinedTasks);
       updateCategories(loadedCats);
       updateThemes(loadedThms);
       updateCategoryText(newCat);
@@ -965,16 +1047,21 @@ export const App: React.FC = () => {
       const currentCats = categoriesRef.current;
       const currentThms = themesRef.current;
       const currentT = tasksRef.current;
+      const mainTasks = currentT.filter((t) => !isStagingCategory(t.category));
 
       const payload: RemotePayload = {
         version: 2,
         updatedAt: new Date().toISOString(),
         categories: currentCats,
         themes: currentThms,
-        tasks: currentT,
+        tasks: mainTasks,
+        completedTasks: completedTasksRef.current,
       };
 
       await pushToGitHub(settings, payload, 'chore: manual push from Dual Memo PWA');
+      await pushStagingToGitHubRepo(settings, stagingDataRef.current).catch((e) => {
+        console.warn('Manual push of staging failed:', e);
+      });
       setSyncStatus('success');
       const now = Date.now();
       setLastSyncedAt(now);

@@ -33,6 +33,19 @@ export interface ArchiveData {
   archivedTasks: CompletedTaskItem[];
 }
 
+export interface StagingTaskItem extends TaskItem {
+  source?: string;       // e.g. "mattermost"
+  createdAt?: string;    // ISO 8601 string
+  postUrl?: string;      // Mattermost permalink
+  author?: string;       // @username
+}
+
+export interface StagingData {
+  version: number;
+  updatedAt: string;
+  tasks: StagingTaskItem[];
+}
+
 export type LineType = 'section' | 'task' | 'comment' | 'empty';
 
 export interface FormattedLine {

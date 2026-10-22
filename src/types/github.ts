@@ -7,6 +7,7 @@ export interface GitHubSettings {
   branch: string;
   path: string;
   archivePath?: string; // e.g. "todo-archive.json"
+  stagingPath?: string; // e.g. "todo-staging.json"
   autoSyncOnSave: boolean;
 }
 

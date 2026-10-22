@@ -44,6 +44,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [repo, setRepo] = useState('');
   const [branch, setBranch] = useState('main');
   const [path, setPath] = useState('todo-data.json');
+  const [stagingPath, setStagingPath] = useState('todo-staging.json');
   const [autoSyncOnSave, setAutoSyncOnSave] = useState(true);
   const [showToken, setShowToken] = useState(false);
   const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
@@ -58,6 +59,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setRepo(settings.repo || '');
       setBranch(settings.branch || 'main');
       setPath(settings.path || 'todo-data.json');
+      setStagingPath(settings.stagingPath || 'todo-staging.json');
       setAutoSyncOnSave(settings.autoSyncOnSave !== false);
     }
   }, [settings, isOpen]);
@@ -72,6 +74,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       repo: repo.trim(),
       branch: branch.trim() || 'main',
       path: path.trim().replace(/^\/+/, '') || 'todo-data.json',
+      stagingPath: stagingPath.trim().replace(/^\/+/, '') || 'todo-staging.json',
       autoSyncOnSave,
     };
     onSaveSettings(newSettings);
@@ -257,7 +260,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  ファイルパス
+                  本番ファイルパス
                 </label>
                 <input
                   type="text"
@@ -267,6 +270,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                仮置き待合室ファイルパス (!staging)
+              </label>
+              <input
+                type="text"
+                value={stagingPath}
+                onChange={(e) => setStagingPath(e.target.value)}
+                placeholder="todo-staging.json"
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">
+                ※Mattermostや外部スクリプトが書き込む独立した仮置きファイルです。昇格したタスクのみが本番ファイルへ保存されます。
+              </p>
             </div>
 
             <div className="flex items-center gap-2 pt-1">

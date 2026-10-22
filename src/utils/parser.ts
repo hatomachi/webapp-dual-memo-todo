@@ -388,8 +388,15 @@ export const organizeSections = (sections: string[], defaultSection: string): st
     }
   }
 
-  // Filter out defaultSection so it can be appended at the end
-  const nonDefaults = uniqueList.filter((s) => s.toLowerCase() !== defaultLower);
+  // Filter out defaultSection (appended at bottom) and staging sections (prepended at top)
+  const topSections = uniqueList.filter((s) => {
+    const root = s.split(':')[0].trim().toLowerCase();
+    return root === 'staging' || root === 'ステージング';
+  });
+  const nonDefaults = uniqueList.filter((s) => {
+    const root = s.split(':')[0].trim().toLowerCase();
+    return s.toLowerCase() !== defaultLower && root !== 'staging' && root !== 'ステージング';
+  });
 
   // Map root section names to their first encountered index
   const rootOrder = new Map<string, number>();
@@ -434,8 +441,8 @@ export const organizeSections = (sections: string[], defaultSection: string): st
     return (origIndexMap.get(a) ?? 0) - (origIndexMap.get(b) ?? 0);
   });
 
-  // Always put the defaultSection at the very bottom
-  return [...nonDefaults, defaultSection];
+  // Always put staging sections at the very top, and defaultSection at the very bottom
+  return [...topSections, ...nonDefaults, defaultSection];
 };
 
 /**
