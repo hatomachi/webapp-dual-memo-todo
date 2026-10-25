@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * Mattermost Flagged Posts to Dual Memo TODO Staging Synchronizer
+ * Mattermost Flagged Posts to Dual Memo TODO Staging Synchronizer (Autonomous AI Drafter)
  * 
- * Fetches flagged (Saved) posts from Mattermost API, extracts task details
- * with full message context indented in comments, appends them to todo-staging.json,
- * and automatically unflags the processed posts to prevent duplicate imports.
+ * Fetches flagged (Saved) posts from Mattermost API, reads current todo-data.json
+ * context (existing themes and categories), autonomously drafts optimal task definitions
+ * (concise action title, theme mapping, due date, full message in comments) using LLM / heuristics,
+ * appends them to todo-staging.json, and automatically unflags the processed posts.
  * 
  * Usage:
  *   node scripts/sync-mattermost-to-staging.js
@@ -12,7 +13,9 @@
  * Environment variables:
  *   MATTERMOST_URL   (default: http://localhost:8065)
  *   MATTERMOST_TOKEN (optional for mock, required for real Mattermost PAT)
+ *   MAIN_DATA_PATH   (default: /Users/s-ikari/work/dual-memo-data/todo-data.json)
  *   STAGING_PATH     (default: /Users/s-ikari/work/dual-memo-data/todo-staging.json)
+ *   GEMINI_API_KEY   (optional: if provided, uses Gemini 2.5 Flash for smart inference)
  */
 
 import fs from 'fs';
@@ -24,8 +27,11 @@ const __dirname = path.dirname(__filename);
 
 const MATTERMOST_URL = (process.env.MATTERMOST_URL || 'http://localhost:8065').replace(/\/+$/, '');
 const MATTERMOST_TOKEN = process.env.MATTERMOST_TOKEN || '';
+const DEFAULT_MAIN_DATA_PATH = path.resolve(__dirname, '../../dual-memo-data/todo-data.json');
+const MAIN_DATA_PATH = process.env.MAIN_DATA_PATH || DEFAULT_MAIN_DATA_PATH;
 const DEFAULT_STAGING_PATH = path.resolve(__dirname, '../../dual-memo-data/todo-staging.json');
 const STAGING_PATH = process.env.STAGING_PATH || DEFAULT_STAGING_PATH;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 // Headers for Mattermost API
 const getHeaders = () => {
@@ -41,14 +47,12 @@ const generateId = () => {
   return 'mm_' + Math.random().toString(36).substring(2, 8) + Date.now().toString(36).substring(4);
 };
 
-// Clean and extract a concise task title from message
-const extractTaskTitle = (message) => {
+// Fallback rule-based title extraction
+const extractTaskTitleFallback = (message) => {
   if (!message) return 'Mattermost依頼の確認';
-  // Take first non-empty line
   const lines = message.split('\n').map((l) => l.trim()).filter(Boolean);
   const firstLine = lines[0] || 'Mattermost依頼の確認';
 
-  // Strip URLs and mentions for title
   let title = firstLine
     .replace(/https?:\/\/[^\s]+/g, '')
     .replace(/<[^>]+>/g, '')
@@ -56,14 +60,25 @@ const extractTaskTitle = (message) => {
     .replace(/^[・･•\-\*]\s*/, '')
     .trim();
 
-  // If too long, truncate
-  if (title.length > 35) {
-    title = title.substring(0, 35) + '…';
+  // Keyword-based cleanup into verb phrases
+  if (/500|エラー|障害|バグ|動かない|落ち/.test(title)) {
+    const errorMatch = title.match(/([^\s]+API|[^\s]+機能|[^\s]+画面|[^\s]+システム)/);
+    const target = errorMatch ? errorMatch[0] : 'システム';
+    return `${target}エラーの調査・対応`;
+  }
+  if (/レビュー|確認|見て|チェック/.test(title)) {
+    const docMatch = title.match(/([^\s]+案|[^\s]+ドキュメント|[^\s]+仕様書|[^\s]+PR|[^\s]+コード)/);
+    const target = docMatch ? docMatch[0] : 'ドキュメント';
+    return `${target}のレビュー・確認`;
+  }
+
+  if (title.length > 25) {
+    title = title.substring(0, 25) + '…';
   }
   return title || 'Mattermost依頼の確認';
 };
 
-// Extract due date tag (#MM/DD or #M/D) from message if present
+// Extract due date tag (#MM/DD or #M/D) from message
 const extractDueDate = (message) => {
   const match = message.match(/[#＃](?:(?:\d{4}|\d{2})[-/])?(\d{1,2}[-/]\d{1,2})/);
   if (match) {
@@ -72,14 +87,134 @@ const extractDueDate = (message) => {
   return null;
 };
 
+// Rule-based theme mapping
+const inferThemeFallback = (message, knownThemes) => {
+  const lowerMsg = message.toLowerCase();
+  for (const th of knownThemes) {
+    if (th.toLowerCase() === 'uncategorized') continue;
+    const cleanTh = th.toLowerCase().replace(/[:_]/g, ' ');
+    const parts = cleanTh.split(' ').filter((p) => p.length > 1);
+    for (const p of parts) {
+      if (lowerMsg.includes(p)) {
+        return th;
+      }
+    }
+  }
+  return 'Uncategorized';
+};
+
+/**
+ * Autonomous AI Drafter: Uses Gemini API if key is available, else smart heuristics
+ */
+async function generateSmartTaskDraft(post, username, channelName, knownThemes, knownCategories) {
+  const message = post.message || '';
+
+  if (GEMINI_API_KEY) {
+    try {
+      const prompt = `あなたは優秀なタスク管理アシスタントです。
+ユーザー宛てのチャットメッセージを分析し、ユーザーのTODOリストに追加するための最適なタスク定義をJSONで作成してください。
+
+【チャットメッセージ】
+発言者: @${username}
+チャンネル: #${channelName}
+本文:
+"""
+${message}
+"""
+
+【既存のテーマ一覧（右ペイン）】
+${JSON.stringify(knownThemes)}
+
+【既存の分類一覧（左ペイン）】
+${JSON.stringify(knownCategories)}
+
+【出力要件 (JSON)】
+以下のキーを持つ単一のJSONオブジェクトのみを返してください。Markdownのコードブロックは不要です。
+{
+  "title": "ユーザーが実行すべきアクションを表す簡潔な動詞終止形のタイトル（10〜18文字以内。チャットの挨拶や長文を排除し、タスクの核心だけを抜き出す。例: '決済API 500エラー調査', 'インフラ構成案のレビュー')",
+  "theme": "既存のテーマ一覧の中から最も適したテーマを1つ選択。どれにも合わない場合は 'Uncategorized'",
+  "category": "既存の分類一覧の中から最も適切なものを選択（通常は 'ワーク' または 'inbox'）",
+  "dueDate": "メッセージ内に期日（'今週末', '10/25まで', '明日'等）の言及があれば 'MM/DD' 形式で。無ければ null",
+  "summary": "依頼の要点を1行（30文字以内）で要約"
+}`;
+
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: 'application/json' },
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (jsonText) {
+          const parsed = JSON.parse(jsonText);
+          return {
+            title: parsed.title || extractTaskTitleFallback(message),
+            theme: parsed.theme || inferThemeFallback(message, knownThemes),
+            category: parsed.category || 'ワーク',
+            dueDate: parsed.dueDate || extractDueDate(message),
+            summary: parsed.summary || message.slice(0, 40),
+            aiGenerated: true,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn(`  ⚠️ Gemini API呼び出し失敗、スマートヒューリスティクスへフォールバック:`, err.message);
+    }
+  }
+
+  // Fallback to smart heuristics
+  const title = extractTaskTitleFallback(message);
+  const theme = inferThemeFallback(message, knownThemes);
+  const dueDate = extractDueDate(message);
+
+  return {
+    title,
+    theme,
+    category: 'ワーク',
+    dueDate,
+    summary: message.slice(0, 40),
+    aiGenerated: false,
+  };
+}
+
 async function main() {
   console.log(`\n======================================================`);
-  console.log(`📡 Mattermost ➔ Dual Memo TODO (!staging) 同期スクリプト`);
+  console.log(`🤖 Mattermost ➔ Dual Memo TODO 自律型AIドラフト同期`);
   console.log(`   Mattermost: ${MATTERMOST_URL}`);
+  console.log(`   Main Data:  ${MAIN_DATA_PATH}`);
   console.log(`   Staging:    ${STAGING_PATH}`);
+  console.log(`   AI Engine:  ${GEMINI_API_KEY ? '✨ Gemini 2.5 Flash' : '🧠 Smart Context Heuristics'}`);
   console.log(`======================================================\n`);
 
-  // 1. Fetch flagged posts from Mattermost
+  // 1. Read existing todo-data.json for context (themes & categories)
+  let knownThemes = ['Uncategorized'];
+  let knownCategories = ['ワーク', 'inbox'];
+
+  if (fs.existsSync(MAIN_DATA_PATH)) {
+    try {
+      const rawMain = fs.readFileSync(MAIN_DATA_PATH, 'utf-8');
+      const mainJson = JSON.parse(rawMain);
+      if (Array.isArray(mainJson.themes) && mainJson.themes.length > 0) {
+        knownThemes = mainJson.themes;
+      }
+      if (Array.isArray(mainJson.categories) && mainJson.categories.length > 0) {
+        knownCategories = mainJson.categories;
+      }
+      console.log(`📖 現在のコンテキストを読込完了:`);
+      console.log(`   テーマ (${knownThemes.length}): ${knownThemes.slice(0, 5).join(', ')}${knownThemes.length > 5 ? '…' : ''}`);
+      console.log(`   分類   (${knownCategories.length}): ${knownCategories.join(', ')}\n`);
+    } catch (e) {
+      console.warn(`⚠️ 本番データの読み込みに失敗しました:`, e.message);
+    }
+  }
+
+  // 2. Fetch flagged posts from Mattermost
   console.log(`⏳ 旗マーク（保存）のついた投稿を取得中...`);
   let flaggedData;
   try {
@@ -103,9 +238,8 @@ async function main() {
     return;
   }
 
-  console.log(`🎯 ${postIds.length}件の旗付き投稿を検出しました。タスク化を開始します...\n`);
+  console.log(`🎯 ${postIds.length}件の旗付き投稿を検出。裏で自律的にドラフトを生成します...\n`);
 
-  // Cache for user and channel names
   const userCache = new Map();
   const channelCache = new Map();
 
@@ -137,7 +271,7 @@ async function main() {
     return channelId;
   };
 
-  // 2. Read existing todo-staging.json
+  // 3. Read existing todo-staging.json
   let stagingData = { version: 1, updatedAt: new Date().toISOString(), tasks: [] };
   if (fs.existsSync(STAGING_PATH)) {
     try {
@@ -172,8 +306,9 @@ async function main() {
     const username = await getUserName(post.user_id);
     const channelName = await getChannelName(post.channel_id);
 
-    const title = extractTaskTitle(post.message);
-    const dueDate = extractDueDate(post.message);
+    // AI Drafter: Infer title, theme, category, due date
+    const draft = await generateSmartTaskDraft(post, username, channelName, knownThemes, knownCategories);
+
     const dateStr = new Date(post.create_at).toLocaleString('ja-JP', {
       month: '2-digit',
       day: '2-digit',
@@ -181,15 +316,11 @@ async function main() {
       minute: '2-digit',
     });
 
-    // Format indented comments for Dual Memo TODO
-    // Line 1: Author, timestamp, channel
-    // Line 2+: Clean original message
-    // Last line: Permalink
+    // Indented comments preserving original context
     const comments = [
       `↳ 👤 @${username} (${dateStr} / #${channelName})`,
     ];
 
-    // Add original message lines (max 3 lines to keep editor clean)
     const rawLines = post.message.split('\n').map((l) => l.trim()).filter(Boolean);
     if (rawLines.length > 0) {
       const snippet = rawLines.slice(0, 3).join(' ');
@@ -200,10 +331,10 @@ async function main() {
 
     const newTask = {
       id: generateId(),
-      title,
+      title: draft.title,
       category: 'staging',
-      theme: 'Uncategorized',
-      dueDate,
+      theme: draft.theme,
+      dueDate: draft.dueDate,
       comments,
       order: stagingData.tasks.length + newTasks.length,
       source: 'mattermost',
@@ -215,23 +346,21 @@ async function main() {
     newTasks.push(newTask);
     processedPostIds.push(post.id);
 
-    console.log(`  ➕ 追加: ・${title} ${dueDate ? '#' + dueDate : ''}`);
+    console.log(`  ✨ AI生成ドラフト: ・${draft.title} ${draft.dueDate ? '#' + draft.dueDate : ''} [${draft.theme}]`);
     console.log(`     ${comments[0]}`);
   }
 
-  if (newTasks.length === 0) {
-    console.log(`\n✨ 新規に追加するタスクはありませんでした。`);
-  } else {
-    // 3. Append to todo-staging.json and save
+  if (newTasks.length > 0) {
+    // 4. Save to todo-staging.json
     stagingData.tasks = [...newTasks, ...stagingData.tasks];
     stagingData.updatedAt = new Date().toISOString();
 
     fs.writeFileSync(STAGING_PATH, JSON.stringify(stagingData, null, 2), 'utf-8');
-    console.log(`\n💾 ${newTasks.length}件のタスクを todo-staging.json に保存しました！`);
+    console.log(`\n💾 ${newTasks.length}件のドラフトを待合室（todo-staging.json）に裏保存完了！`);
   }
 
-  // 4. Unflag processed posts in Mattermost to prevent re-processing
-  console.log(`\n🧹 Mattermostの旗マーク（保存）を解除中...`);
+  // 5. Unflag processed posts in Mattermost
+  console.log(`\n🧹 Mattermostの旗マーク（保存）を自動解除中...`);
   for (const pid of processedPostIds) {
     try {
       const unflagRes = await fetch(`${MATTERMOST_URL}/api/v4/users/me/posts/${pid}/unflag`, {
@@ -247,8 +376,8 @@ async function main() {
   }
 
   console.log(`\n======================================================`);
-  console.log(`🎉 同期完了！Dual Memo TODO を開いて確認してください。`);
-  console.log(`   最上部に「!staging」としてタスクが展開されます。`);
+  console.log(`🎉 完了！Dual Memo TODO のヘッダー「📥 待合室」から`);
+  console.log(`   裏で作成されたドラフトを確認・1タップ採用できます。`);
   console.log(`======================================================\n`);
 }
 

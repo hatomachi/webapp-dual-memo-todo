@@ -62,6 +62,15 @@ let posts = [
   },
 ];
 
+const escapeHtml = (str) => {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+};
+
 const sendJson = (res, statusCode, data) => {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -172,8 +181,15 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Ignore favicon
+  if (pathname === '/favicon.ico') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   // --- Web UI (HTML) ---
-  if (method === 'GET' && (pathname === '/' || pathname.startsWith('/team/pl/'))) {
+  if ((method === 'GET' || method === 'HEAD') && (pathname === '/' || pathname.startsWith('/team/pl/'))) {
     const flaggedCount = posts.filter((p) => p.is_flagged).length;
     const highlightPostId = pathname.startsWith('/team/pl/') ? pathname.replace('/team/pl/', '') : null;
 
@@ -339,10 +355,11 @@ const server = http.createServer((req, res) => {
   sendJson(res, 404, { message: 'Not found' });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n======================================================`);
   console.log(`🚀 Mattermost API Mock Server started on:`);
   console.log(`   👉 http://localhost:${PORT}`);
+  console.log(`   👉 http://127.0.0.1:${PORT}`);
   console.log(`   👉 Flagged API: http://localhost:${PORT}/api/v4/users/me/posts/flagged`);
   console.log(`======================================================\n`);
 });

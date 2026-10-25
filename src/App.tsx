@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { PaneType, TaskItem, CompletedTaskItem, ArchiveData, StagingData } from './types/todo';
+import { PaneType, TaskItem, CompletedTaskItem, ArchiveData, StagingData, StagingTaskItem } from './types/todo';
 import {
   parseCategoryText,
   parseCategoryTextWithCompleted,
@@ -26,6 +26,7 @@ import { HistoryModal } from './components/HistoryModal';
 import { SettingsModal } from './components/SettingsModal';
 import { CalendarPickerModal } from './components/CalendarPickerModal';
 import { CompletedTasksDrawer } from './components/CompletedTasksDrawer';
+import { StagingDrawer } from './components/StagingDrawer';
 import { ArchiveModal } from './components/ArchiveModal';
 import { QuickToolbar } from './components/QuickToolbar';
 import { useVisualViewport } from './hooks/useVisualViewport';
@@ -121,6 +122,7 @@ export const App: React.FC = () => {
   const [isCalendarOpen, setIsCalendarOpen] = useState<boolean>(false);
   const [isCompletedDrawerOpen, setIsCompletedDrawerOpen] = useState<boolean>(false);
   const [selectedThemeForCompletedDrawer, setSelectedThemeForCompletedDrawer] = useState<string | null>(null);
+  const [isStagingDrawerOpen, setIsStagingDrawerOpen] = useState<boolean>(false);
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [lastCompletedTaskForUndo, setLastCompletedTaskForUndo] = useState<CompletedTaskItem | null>(null);
@@ -320,27 +322,19 @@ export const App: React.FC = () => {
         }).catch(() => {});
 
         // Fetch staging tasks from GitHub
-        let currentStaging = stagingDataRef.current;
         try {
           const remoteStaging = await fetchStagingFromGitHubRepo(settings);
           if (remoteStaging) {
-            currentStaging = remoteStaging;
             updateStagingData(remoteStaging);
           }
         } catch (e) {
           console.warn('Failed to fetch remote staging:', e);
         }
 
-        // Merge staging tasks with loadedTasks (avoiding duplicate IDs)
-        const loadedTaskIds = new Set(loadedTasks.map((t) => t.id));
-        const stagingTasksToMerge = currentStaging.tasks.filter((t) => !loadedTaskIds.has(t.id));
-        const combinedTasks = [...stagingTasksToMerge, ...loadedTasks];
-
         // Sort tasks globally by due date so both panes (categories and themes) are naturally ordered by due date
-        const sortedCombinedTasks = sortTasksByDueDate(combinedTasks);
         const sortedLoadedTasks = sortTasksByDueDate(loadedTasks);
-        const newCat = formatTasksToCategoryText(sortedCombinedTasks, loadedCats, loadedCatComments);
-        const newThm = formatTasksToThemeText(sortedCombinedTasks, loadedThms, loadedThmComments);
+        const newCat = formatTasksToCategoryText(sortedLoadedTasks, loadedCats, loadedCatComments);
+        const newThm = formatTasksToThemeText(sortedLoadedTasks, loadedThms, loadedThmComments);
 
         // If current text is already identical to remote, just mark success
         if (
@@ -356,7 +350,7 @@ export const App: React.FC = () => {
 
         // Only apply if user is still not dirty
         if (dirtyPaneRef.current === null) {
-          updateTasks(sortedCombinedTasks);
+          updateTasks(sortedLoadedTasks);
           updateCategories(loadedCats);
           updateThemes(loadedThms);
           updateCategoryComments(loadedCatComments);
@@ -519,17 +513,13 @@ export const App: React.FC = () => {
 
     // Filter out staging tasks from main tasks storage if any
     const mainInitialT = initialT.filter((t) => !isStagingCategory(t.category));
-    const mainTaskIds = new Set(mainInitialT.map((t) => t.id));
-    const stagingTasksToMerge = stagingDataRef.current.tasks.filter((t) => !mainTaskIds.has(t.id));
-    const combinedInitialTasks = [...stagingTasksToMerge, ...mainInitialT];
 
     // Sort tasks on startup by due date so both panes (category and theme) open in due date order
-    const sortedCombinedT = combinedInitialTasks.length > 0 ? sortTasksByDueDate(combinedInitialTasks) : combinedInitialTasks;
     const sortedMainT = mainInitialT.length > 0 ? sortTasksByDueDate(mainInitialT) : mainInitialT;
-    const initialSortedCat = initialCat ? formatTasksToCategoryText(sortedCombinedT, initialCats, initialCatComments) : initialCat;
-    const initialSortedThm = initialThm ? formatTasksToThemeText(sortedCombinedT, initialThms, initialThmComments) : initialThm;
+    const initialSortedCat = initialCat ? formatTasksToCategoryText(sortedMainT, initialCats, initialCatComments) : initialCat;
+    const initialSortedThm = initialThm ? formatTasksToThemeText(sortedMainT, initialThms, initialThmComments) : initialThm;
 
-    updateTasks(sortedCombinedT);
+    updateTasks(sortedMainT);
     updateCategories(initialCats);
     updateThemes(initialThms);
     updateCategoryComments(initialCatComments);
@@ -1019,6 +1009,93 @@ export const App: React.FC = () => {
     [archiveData, saveToStorage, triggerBackgroundGitHubPush]
   );
 
+  // Promote task from staging drawer to main active tasks
+  const handlePromoteFromDrawer = useCallback(
+    (task: StagingTaskItem, targetCategory: string, targetTheme: string) => {
+      // 1. Remove from staging
+      const remainingStagingTasks = stagingDataRef.current.tasks.filter((t) => t.id !== task.id);
+      const updatedStaging: StagingData = {
+        ...stagingDataRef.current,
+        updatedAt: new Date().toISOString(),
+        tasks: remainingStagingTasks,
+      };
+      updateStagingData(updatedStaging);
+
+      // Background push staging to GitHub if configured
+      const settings = loadGitHubSettings();
+      if (settings && settings.autoSyncOnSave) {
+        pushStagingToGitHubRepo(settings, updatedStaging).catch((err) => {
+          console.warn('Failed to push updated staging to GitHub:', err);
+        });
+      }
+
+      // 2. Add to main active tasks
+      const newTask: TaskItem = {
+        id: task.id,
+        title: task.title,
+        category: targetCategory,
+        theme: targetTheme,
+        dueDate: task.dueDate,
+        comments: task.comments,
+        order: tasksRef.current.length,
+      };
+
+      const updatedMainTasks = [newTask, ...tasksRef.current];
+      const sortedMain = sortTasksByDueDate(updatedMainTasks);
+
+      let updatedCats = categoriesRef.current;
+      if (!updatedCats.some((c) => c.toLowerCase() === targetCategory.toLowerCase())) {
+        updatedCats = [...updatedCats, targetCategory];
+        updateCategories(updatedCats);
+      }
+
+      let updatedThms = themesRef.current;
+      if (targetTheme !== 'Uncategorized' && !updatedThms.some((th) => th.toLowerCase() === targetTheme.toLowerCase())) {
+        updatedThms = [...updatedThms, targetTheme];
+        updateThemes(updatedThms);
+      }
+
+      const newCatText = formatTasksToCategoryText(sortedMain, updatedCats, categoryCommentsRef.current);
+      const newThmText = formatTasksToThemeText(sortedMain, updatedThms, themeCommentsRef.current);
+
+      updateTasks(sortedMain);
+      updateCategoryText(newCatText);
+      updateThemeText(newThmText);
+      saveToStorage(sortedMain, newCatText, newThmText, updatedCats, updatedThms);
+
+      // Record snapshot
+      const label = `待合室から採用: ${task.title}`;
+      setHistoryState((prev) => addSnapshot(prev, label, newCatText, newThmText));
+
+      // Trigger background GitHub push for main tasks
+      triggerBackgroundGitHubPush(sortedMain, updatedCats, updatedThms, label);
+
+      showToast(`🚀 「${task.title}」を !${targetCategory} に採用しました！`);
+    },
+    [saveToStorage, triggerBackgroundGitHubPush]
+  );
+
+  // Dismiss task from staging drawer
+  const handleDismissFromDrawer = useCallback((taskId: string) => {
+    const target = stagingDataRef.current.tasks.find((t) => t.id === taskId);
+    const remainingStagingTasks = stagingDataRef.current.tasks.filter((t) => t.id !== taskId);
+    const updatedStaging: StagingData = {
+      ...stagingDataRef.current,
+      updatedAt: new Date().toISOString(),
+      tasks: remainingStagingTasks,
+    };
+    updateStagingData(updatedStaging);
+
+    const settings = loadGitHubSettings();
+    if (settings && settings.autoSyncOnSave) {
+      pushStagingToGitHubRepo(settings, updatedStaging).catch((err) => {
+        console.warn('Failed to push updated staging to GitHub:', err);
+      });
+    }
+
+    showToast(`🗑️ 「${target?.title || 'タスク'}」を破棄しました`);
+  }, []);
+
   const completedCountByTheme = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const task of completedTasksRef.current) {
@@ -1229,27 +1306,20 @@ export const App: React.FC = () => {
           : extractThemeSections(payload.themeText || '');
 
       // Fetch staging tasks as well
-      let currentStaging = stagingDataRef.current;
       try {
         const remoteStaging = await fetchStagingFromGitHubRepo(settings);
         if (remoteStaging) {
-          currentStaging = remoteStaging;
           updateStagingData(remoteStaging);
         }
       } catch (e) {
         console.warn('Failed to fetch remote staging:', e);
       }
 
-      const loadedTaskIds = new Set(loadedTasks.map((t) => t.id));
-      const stagingTasksToMerge = currentStaging.tasks.filter((t) => !loadedTaskIds.has(t.id));
-      const combinedTasks = [...stagingTasksToMerge, ...loadedTasks];
-
-      const sortedCombinedTasks = sortTasksByDueDate(combinedTasks);
       const sortedLoadedTasks = sortTasksByDueDate(loadedTasks);
-      const newCat = formatTasksToCategoryText(sortedCombinedTasks, loadedCats);
-      const newThm = formatTasksToThemeText(sortedCombinedTasks, loadedThms);
+      const newCat = formatTasksToCategoryText(sortedLoadedTasks, loadedCats);
+      const newThm = formatTasksToThemeText(sortedLoadedTasks, loadedThms);
 
-      updateTasks(sortedCombinedTasks);
+      updateTasks(sortedLoadedTasks);
       updateCategories(loadedCats);
       updateThemes(loadedThms);
       updateCategoryText(newCat);
@@ -1385,6 +1455,8 @@ export const App: React.FC = () => {
           onToggleHistory={() => setIsHistoryOpen(true)}
           onToggleArchive={() => setIsArchiveModalOpen(true)}
           archiveThemeCount={archiveData.archivedThemes.length}
+          onToggleStaging={() => setIsStagingDrawerOpen(true)}
+          stagingCount={stagingData.tasks.length}
           onToggleSettings={() => setIsSettingsOpen(true)}
           canUndo={canUndo}
           canRedo={canRedo}
@@ -1552,6 +1624,16 @@ export const App: React.FC = () => {
         initialSelectedTheme={selectedThemeForCompletedDrawer}
         onRestoreTask={handleRestoreCompletedTask}
         onArchiveTheme={handleArchiveTheme}
+      />
+
+      <StagingDrawer
+        isOpen={isStagingDrawerOpen}
+        onClose={() => setIsStagingDrawerOpen(false)}
+        stagingTasks={stagingData.tasks}
+        knownCategories={categoriesRef.current}
+        knownThemes={themesRef.current}
+        onPromoteTask={handlePromoteFromDrawer}
+        onDismissTask={handleDismissFromDrawer}
       />
 
       <ArchiveModal

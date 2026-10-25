@@ -12,6 +12,7 @@ import {
   Cloud,
   CloudOff,
   CheckCircle2,
+  Inbox,
 } from 'lucide-react';
 import { SyncStatus } from '../types/github';
 
@@ -22,6 +23,8 @@ interface HeaderProps {
   onToggleHistory: () => void;
   onToggleArchive?: () => void;
   archiveThemeCount?: number;
+  onToggleStaging?: () => void;
+  stagingCount?: number;
   onToggleSettings: () => void;
   canUndo: boolean;
   canRedo: boolean;
@@ -41,6 +44,8 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleHistory,
   onToggleArchive,
   archiveThemeCount = 0,
+  onToggleStaging,
+  stagingCount = 0,
   onToggleSettings,
   canUndo,
   canRedo,
@@ -123,6 +128,34 @@ export const Header: React.FC<HeaderProps> = ({
             <Clock className="w-4 h-4" />
             <span className="text-[11px] font-mono hidden md:inline">{historyCount}世代</span>
           </button>
+
+          {/* Staging Drawer Button (Pending tasks from Mattermost/AI) */}
+          {onToggleStaging && (
+            <button
+              type="button"
+              onClick={onToggleStaging}
+              title={`受信トレイ・待合室 (未処理 ${stagingCount}件)`}
+              className={`flex items-center gap-1 p-1.5 sm:px-2 rounded-md transition-all ${
+                stagingCount > 0
+                  ? 'bg-amber-100 text-amber-900 border border-amber-300 font-bold shadow-sm animate-pulse'
+                  : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <Inbox className={`w-4 h-4 ${stagingCount > 0 ? 'text-amber-700' : 'text-slate-400'}`} />
+              <span className="text-[11px] font-mono">
+                {stagingCount > 0 ? (
+                  <span className="inline-flex items-center gap-0.5">
+                    <span className="hidden md:inline">待合室</span>
+                    <span className="bg-amber-600 text-white text-[10px] px-1.5 py-0.2 rounded-full">
+                      {stagingCount}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="hidden md:inline">待合室</span>
+                )}
+              </span>
+            </button>
+          )}
 
           {/* Archive Modal Button */}
           {onToggleArchive && (
