@@ -20,6 +20,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -357,6 +358,21 @@ async function main() {
 
     fs.writeFileSync(STAGING_PATH, JSON.stringify(stagingData, null, 2), 'utf-8');
     console.log(`\n💾 ${newTasks.length}件のドラフトを待合室（todo-staging.json）に裏保存完了！`);
+
+    // 4.5 Auto-push to GitHub if staging path is inside a git repo
+    const stagingDir = path.dirname(STAGING_PATH);
+    if (fs.existsSync(path.join(stagingDir, '.git'))) {
+      try {
+        console.log(`☁️ GitHub Private Repo へ自動プッシュ中...`);
+        execSync(`git pull --rebase && git add todo-staging.json && (git diff-index --quiet HEAD || git commit -m "feat(staging): sync ${newTasks.length} tasks from Mattermost") && git push origin main`, {
+          cwd: stagingDir,
+          stdio: 'pipe',
+        });
+        console.log(`  ✓ GitHubへのプッシュ完了！（PWA/スマホ側にも即時反映されます）`);
+      } catch (gitErr) {
+        console.warn(`  ⚠️ GitHubへの自動プッシュをスキップしました:`, gitErr.message);
+      }
+    }
   }
 
   // 5. Unflag processed posts in Mattermost
