@@ -18,6 +18,8 @@ export interface RemotePayload {
   completedTasks?: CompletedTaskItem[];
   categories?: string[];
   themes?: string[];
+  categoryComments?: Record<string, string[]>;
+  themeComments?: Record<string, string[]>;
   categoryText?: string;
   themeText?: string;
 }

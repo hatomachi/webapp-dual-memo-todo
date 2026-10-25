@@ -45,12 +45,14 @@ export const archiveTheme = (
   themeName: string,
   currentTasks: TaskItem[],
   currentCompletedTasks: CompletedTaskItem[],
-  archiveData: ArchiveData
+  archiveData: ArchiveData,
+  themeComments?: Record<string, string[]>
 ): {
   updatedTasks: TaskItem[];
   updatedCompletedTasks: CompletedTaskItem[];
   updatedThemes: (currentThemes: string[]) => string[];
   updatedArchive: ArchiveData;
+  updatedThemeComments: Record<string, string[]>;
   archivedCount: number;
 } => {
   const normTarget = themeName.trim().toLowerCase();
@@ -77,10 +79,16 @@ export const archiveTheme = (
     })),
   ];
 
+  const matchedCommentsKey = themeComments
+    ? Object.keys(themeComments).find((k) => k.trim().toLowerCase() === normTarget)
+    : undefined;
+  const existingComments = matchedCommentsKey ? themeComments![matchedCommentsKey] : [];
+
   const newArchivedTheme: ArchivedTheme = {
     theme: themeName,
     archivedAt: new Date().toISOString(),
     tasks: combinedTasks,
+    comments: existingComments && existingComments.length > 0 ? existingComments : undefined,
   };
 
   // Remove existing entry for the same theme if any
@@ -103,12 +111,18 @@ export const archiveTheme = (
     (t) => (t.theme || 'Uncategorized').trim().toLowerCase() !== normTarget
   );
 
+  const nextThemeComments: Record<string, string[]> = { ...(themeComments || {}) };
+  if (matchedCommentsKey) {
+    delete nextThemeComments[matchedCommentsKey];
+  }
+
   return {
     updatedTasks: remainingTasks,
     updatedCompletedTasks: remainingCompleted,
     updatedThemes: (currentThemes: string[]) =>
       currentThemes.filter((th) => th.trim().toLowerCase() !== normTarget),
     updatedArchive,
+    updatedThemeComments: nextThemeComments,
     archivedCount: combinedTasks.length,
   };
 };
@@ -122,6 +136,7 @@ export const restoreArchivedTheme = (
 ): {
   restoredThemeName: string;
   restoredTasks: TaskItem[];
+  restoredComments?: string[];
   updatedArchive: ArchiveData;
 } => {
   const normTarget = themeName.trim().toLowerCase();
@@ -156,6 +171,7 @@ export const restoreArchivedTheme = (
   return {
     restoredThemeName: foundTheme.theme,
     restoredTasks,
+    restoredComments: foundTheme.comments,
     updatedArchive,
   };
 };

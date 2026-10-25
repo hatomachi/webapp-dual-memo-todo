@@ -24,6 +24,7 @@ export interface ArchivedTheme {
   theme: string;
   archivedAt: string;
   tasks: CompletedTaskItem[];
+  comments?: string[];
 }
 
 export interface ArchiveData {

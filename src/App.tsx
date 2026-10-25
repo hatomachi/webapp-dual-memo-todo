@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { PaneType, TaskItem, CompletedTaskItem, ArchiveData, StagingData } from './types/todo';
 import {
   parseCategoryText,
-  parseThemeText,
   parseCategoryTextWithCompleted,
   parseThemeTextWithCompleted,
   formatTasksToCategoryText,
@@ -68,6 +67,8 @@ const STORAGE_KEY_CAT_TEXT = 'dual_memo_category_text_v3';
 const STORAGE_KEY_THM_TEXT = 'dual_memo_theme_text_v3';
 const STORAGE_KEY_CATEGORIES = 'dual_memo_categories_v3';
 const STORAGE_KEY_THEMES = 'dual_memo_themes_v3';
+const STORAGE_KEY_CATEGORY_COMMENTS = 'dual_memo_category_comments_v1';
+const STORAGE_KEY_THEME_COMMENTS = 'dual_memo_theme_comments_v1';
 const STORAGE_KEY_ACTIVE_MOBILE_PANE = 'dual_memo_active_mobile_pane_v1';
 
 const getInitialMobilePane = (): PaneType => {
@@ -88,6 +89,8 @@ export const App: React.FC = () => {
   const [themeText, setThemeText] = useState<string>('');
   const [, setCategories] = useState<string[]>([]);
   const [, setThemes] = useState<string[]>([]);
+  const [, setCategoryComments] = useState<Record<string, string[]>>({});
+  const [, setThemeComments] = useState<Record<string, string[]>>({});
   const [activeMobilePane, setActiveMobilePaneState] = useState<PaneType>(getInitialMobilePane);
   const [focusedPane, setFocusedPane] = useState<PaneType | null>(null);
   const [dirtyPane, setDirtyPane] = useState<PaneType | null>(null);
@@ -152,6 +155,8 @@ export const App: React.FC = () => {
   const themeTextRef = useRef<string>('');
   const categoriesRef = useRef<string[]>([]);
   const themesRef = useRef<string[]>([]);
+  const categoryCommentsRef = useRef<Record<string, string[]>>({});
+  const themeCommentsRef = useRef<Record<string, string[]>>({});
   const tasksRef = useRef<TaskItem[]>([]);
   const completedTasksRef = useRef<CompletedTaskItem[]>([]);
 
@@ -177,6 +182,16 @@ export const App: React.FC = () => {
   const updateThemes = (val: string[]) => {
     themesRef.current = val;
     setThemes(val);
+  };
+
+  const updateCategoryComments = (val: Record<string, string[]>) => {
+    categoryCommentsRef.current = val;
+    setCategoryComments(val);
+  };
+
+  const updateThemeComments = (val: Record<string, string[]>) => {
+    themeCommentsRef.current = val;
+    setThemeComments(val);
   };
 
   const updateTasks = (val: TaskItem[]) => {
@@ -226,7 +241,9 @@ export const App: React.FC = () => {
       newThmText: string,
       newCats?: string[],
       newThms?: string[],
-      newCompleted?: CompletedTaskItem[]
+      newCompleted?: CompletedTaskItem[],
+      newCatComments?: Record<string, string[]>,
+      newThmComments?: Record<string, string[]>
     ) => {
       try {
         localStorage.setItem(STORAGE_KEY_TASKS, JSON.stringify(newTasks));
@@ -240,6 +257,12 @@ export const App: React.FC = () => {
         }
         if (newCompleted) {
           localStorage.setItem(STORAGE_KEY_COMPLETED_TASKS, JSON.stringify(newCompleted));
+        }
+        if (newCatComments) {
+          localStorage.setItem(STORAGE_KEY_CATEGORY_COMMENTS, JSON.stringify(newCatComments));
+        }
+        if (newThmComments) {
+          localStorage.setItem(STORAGE_KEY_THEME_COMMENTS, JSON.stringify(newThmComments));
         }
       } catch (err) {
         console.error('Failed to save to localStorage', err);
@@ -282,6 +305,9 @@ export const App: React.FC = () => {
             ? payload.themes
             : extractThemeSections(payload.themeText || '');
 
+        const loadedCatComments: Record<string, string[]> = payload.categoryComments || {};
+        const loadedThmComments: Record<string, string[]> = payload.themeComments || {};
+
         if (Array.isArray(payload.completedTasks)) {
           updateCompletedTasks(payload.completedTasks);
         }
@@ -313,8 +339,8 @@ export const App: React.FC = () => {
         // Sort tasks globally by due date so both panes (categories and themes) are naturally ordered by due date
         const sortedCombinedTasks = sortTasksByDueDate(combinedTasks);
         const sortedLoadedTasks = sortTasksByDueDate(loadedTasks);
-        const newCat = formatTasksToCategoryText(sortedCombinedTasks, loadedCats);
-        const newThm = formatTasksToThemeText(sortedCombinedTasks, loadedThms);
+        const newCat = formatTasksToCategoryText(sortedCombinedTasks, loadedCats, loadedCatComments);
+        const newThm = formatTasksToThemeText(sortedCombinedTasks, loadedThms, loadedThmComments);
 
         // If current text is already identical to remote, just mark success
         if (
@@ -333,9 +359,20 @@ export const App: React.FC = () => {
           updateTasks(sortedCombinedTasks);
           updateCategories(loadedCats);
           updateThemes(loadedThms);
+          updateCategoryComments(loadedCatComments);
+          updateThemeComments(loadedThmComments);
           updateCategoryText(newCat);
           updateThemeText(newThm);
-          saveToStorage(sortedLoadedTasks, newCat, newThm, loadedCats, loadedThms);
+          saveToStorage(
+            sortedLoadedTasks,
+            newCat,
+            newThm,
+            loadedCats,
+            loadedThms,
+            undefined,
+            loadedCatComments,
+            loadedThmComments
+          );
           setSyncStatus('success');
           const now = Date.now();
           setLastSyncedAt(now);
@@ -362,7 +399,9 @@ export const App: React.FC = () => {
       cats: string[],
       thms: string[],
       label: string,
-      customCompletedTasks?: CompletedTaskItem[]
+      customCompletedTasks?: CompletedTaskItem[],
+      customCatComments?: Record<string, string[]>,
+      customThmComments?: Record<string, string[]>
     ) => {
       const settings = loadGitHubSettings();
       if (!settings || !settings.token || !settings.owner || !settings.repo) {
@@ -380,6 +419,8 @@ export const App: React.FC = () => {
           updatedAt: new Date().toISOString(),
           categories: cats,
           themes: thms,
+          categoryComments: customCatComments || categoryCommentsRef.current,
+          themeComments: customThmComments || themeCommentsRef.current,
           tasks,
           completedTasks: customCompletedTasks || completedTasksRef.current,
         };
@@ -411,6 +452,8 @@ export const App: React.FC = () => {
     let initialT: TaskItem[] = [];
     let initialCats: string[] = [];
     let initialThms: string[] = [];
+    let initialCatComments: Record<string, string[]> = {};
+    let initialThmComments: Record<string, string[]> = {};
 
     try {
       const savedTasksJson = localStorage.getItem(STORAGE_KEY_TASKS);
@@ -419,6 +462,8 @@ export const App: React.FC = () => {
       const savedThmText = localStorage.getItem(STORAGE_KEY_THM_TEXT);
       const savedCatsJson = localStorage.getItem(STORAGE_KEY_CATEGORIES);
       const savedThmsJson = localStorage.getItem(STORAGE_KEY_THEMES);
+      const savedCatCommentsJson = localStorage.getItem(STORAGE_KEY_CATEGORY_COMMENTS);
+      const savedThmCommentsJson = localStorage.getItem(STORAGE_KEY_THEME_COMMENTS);
 
       if (savedCompletedJson) {
         const loadedCompleted = JSON.parse(savedCompletedJson);
@@ -432,6 +477,12 @@ export const App: React.FC = () => {
       }
       if (savedThmsJson) {
         initialThms = JSON.parse(savedThmsJson);
+      }
+      if (savedCatCommentsJson) {
+        initialCatComments = JSON.parse(savedCatCommentsJson);
+      }
+      if (savedThmCommentsJson) {
+        initialThmComments = JSON.parse(savedThmCommentsJson);
       }
 
       if (savedTasksJson && savedCatText !== null && savedThmText !== null) {
@@ -448,13 +499,21 @@ export const App: React.FC = () => {
       initialCats = extractCategorySections(INITIAL_CATEGORY_TEXT);
       initialThms = ['Uncategorized'];
       initialCat = INITIAL_CATEGORY_TEXT;
-      initialThm = formatTasksToThemeText(initialT, initialThms);
+      initialThm = formatTasksToThemeText(initialT, initialThms, initialThmComments);
     } else {
       if (initialCats.length === 0) {
         initialCats = extractCategorySections(initialCat);
       }
       if (initialThms.length === 0) {
         initialThms = extractThemeSections(initialThm);
+      }
+      if (Object.keys(initialCatComments).length === 0 && initialCat) {
+        const parsed = parseCategoryTextWithCompleted(initialCat);
+        initialCatComments = parsed.sectionComments;
+      }
+      if (Object.keys(initialThmComments).length === 0 && initialThm) {
+        const parsed = parseThemeTextWithCompleted(initialThm);
+        initialThmComments = parsed.sectionComments;
       }
     }
 
@@ -467,16 +526,27 @@ export const App: React.FC = () => {
     // Sort tasks on startup by due date so both panes (category and theme) open in due date order
     const sortedCombinedT = combinedInitialTasks.length > 0 ? sortTasksByDueDate(combinedInitialTasks) : combinedInitialTasks;
     const sortedMainT = mainInitialT.length > 0 ? sortTasksByDueDate(mainInitialT) : mainInitialT;
-    const initialSortedCat = initialCat ? formatTasksToCategoryText(sortedCombinedT, initialCats) : initialCat;
-    const initialSortedThm = initialThm ? formatTasksToThemeText(sortedCombinedT, initialThms) : initialThm;
+    const initialSortedCat = initialCat ? formatTasksToCategoryText(sortedCombinedT, initialCats, initialCatComments) : initialCat;
+    const initialSortedThm = initialThm ? formatTasksToThemeText(sortedCombinedT, initialThms, initialThmComments) : initialThm;
 
     updateTasks(sortedCombinedT);
     updateCategories(initialCats);
     updateThemes(initialThms);
+    updateCategoryComments(initialCatComments);
+    updateThemeComments(initialThmComments);
     updateCategoryText(initialSortedCat);
     updateThemeText(initialSortedThm);
     if (sortedMainT.length > 0) {
-      saveToStorage(sortedMainT, initialSortedCat, initialSortedThm, initialCats, initialThms);
+      saveToStorage(
+        sortedMainT,
+        initialSortedCat,
+        initialSortedThm,
+        initialCats,
+        initialThms,
+        undefined,
+        initialCatComments,
+        initialThmComments
+      );
     }
 
     // If history is empty, record initial state
@@ -539,8 +609,10 @@ export const App: React.FC = () => {
         if (parsed.completedTasks.length !== completedTasksRef.current.length) {
           updateCompletedTasks(parsed.completedTasks);
         }
-        newCat = formatTasksToCategoryText(newTasks, newCats);
-        newThm = formatTasksToThemeText(newTasks, newThms);
+        const updatedCatComments = parsed.sectionComments;
+        newCat = formatTasksToCategoryText(newTasks, newCats, updatedCatComments);
+        newThm = formatTasksToThemeText(newTasks, newThms, themeCommentsRef.current);
+        updateCategoryComments(updatedCatComments);
         updateCategories(newCats);
         updateTasks(newTasks);
         updateCategoryText(newCat);
@@ -558,8 +630,10 @@ export const App: React.FC = () => {
         if (parsed.completedTasks.length !== completedTasksRef.current.length) {
           updateCompletedTasks(parsed.completedTasks);
         }
-        newThm = formatTasksToThemeText(newTasks, newThms);
-        newCat = formatTasksToCategoryText(newTasks, newCats);
+        const updatedThmComments = parsed.sectionComments;
+        newThm = formatTasksToThemeText(newTasks, newThms, updatedThmComments);
+        newCat = formatTasksToCategoryText(newTasks, newCats, categoryCommentsRef.current);
+        updateThemeComments(updatedThmComments);
         updateThemes(newThms);
         updateTasks(newTasks);
         updateCategoryText(newCat);
@@ -584,7 +658,16 @@ export const App: React.FC = () => {
         }
       }
 
-      saveToStorage(mainTasks, newCat, newThm, newCats, newThms);
+      saveToStorage(
+        mainTasks,
+        newCat,
+        newThm,
+        newCats,
+        newThms,
+        undefined,
+        categoryCommentsRef.current,
+        themeCommentsRef.current
+      );
 
       if (promotedTasks.length > 0) {
         showToast(`🚀 ${promotedTasks.length}件のタスクを本番へ昇格しました！`);
@@ -604,7 +687,15 @@ export const App: React.FC = () => {
       setHistoryState((prev) => addSnapshot(prev, label, newCat, newThm));
 
       // Trigger background GitHub push if configured
-      triggerBackgroundGitHubPush(mainTasks, newCats, newThms, label);
+      triggerBackgroundGitHubPush(
+        mainTasks,
+        newCats,
+        newThms,
+        label,
+        undefined,
+        categoryCommentsRef.current,
+        themeCommentsRef.current
+      );
     },
     [saveToStorage, triggerBackgroundGitHubPush]
   );
@@ -703,26 +794,64 @@ export const App: React.FC = () => {
       const newCats = extractCategorySections(updatedRawText);
       const parsed = parseCategoryTextWithCompleted(updatedRawText, tasksRef.current, newCompleted);
       const newTasks = parsed.tasks;
-      const newCat = formatTasksToCategoryText(newTasks, newCats);
-      const newThm = formatTasksToThemeText(newTasks, themesRef.current);
+      const updatedCatComments = parsed.sectionComments;
+      const newCat = formatTasksToCategoryText(newTasks, newCats, updatedCatComments);
+      const newThm = formatTasksToThemeText(newTasks, themesRef.current, themeCommentsRef.current);
+      updateCategoryComments(updatedCatComments);
       updateCategories(newCats);
       updateTasks(newTasks);
       updateCategoryText(newCat);
       updateThemeText(newThm);
-      saveToStorage(newTasks, newCat, newThm, newCats, themesRef.current, newCompleted);
-      triggerBackgroundGitHubPush(newTasks, newCats, themesRef.current, `complete: ${title}`);
+      saveToStorage(
+        newTasks,
+        newCat,
+        newThm,
+        newCats,
+        themesRef.current,
+        newCompleted,
+        updatedCatComments,
+        themeCommentsRef.current
+      );
+      triggerBackgroundGitHubPush(
+        newTasks,
+        newCats,
+        themesRef.current,
+        `complete: ${title}`,
+        newCompleted,
+        updatedCatComments,
+        themeCommentsRef.current
+      );
     } else {
       const newThms = extractThemeSections(updatedRawText);
       const parsed = parseThemeTextWithCompleted(updatedRawText, tasksRef.current, newCompleted);
       const newTasks = parsed.tasks;
-      const newThm = formatTasksToThemeText(newTasks, newThms);
-      const newCat = formatTasksToCategoryText(newTasks, categoriesRef.current);
+      const updatedThmComments = parsed.sectionComments;
+      const newThm = formatTasksToThemeText(newTasks, newThms, updatedThmComments);
+      const newCat = formatTasksToCategoryText(newTasks, categoriesRef.current, categoryCommentsRef.current);
+      updateThemeComments(updatedThmComments);
       updateThemes(newThms);
       updateTasks(newTasks);
       updateCategoryText(newCat);
       updateThemeText(newThm);
-      saveToStorage(newTasks, newCat, newThm, categoriesRef.current, newThms, newCompleted);
-      triggerBackgroundGitHubPush(newTasks, categoriesRef.current, newThms, `complete: ${title}`);
+      saveToStorage(
+        newTasks,
+        newCat,
+        newThm,
+        categoriesRef.current,
+        newThms,
+        newCompleted,
+        categoryCommentsRef.current,
+        updatedThmComments
+      );
+      triggerBackgroundGitHubPush(
+        newTasks,
+        categoriesRef.current,
+        newThms,
+        `complete: ${title}`,
+        newCompleted,
+        categoryCommentsRef.current,
+        updatedThmComments
+      );
     }
 
     updateDirtyPane(null);
@@ -749,14 +878,31 @@ export const App: React.FC = () => {
       };
 
       const newTasks = [restored, ...tasksRef.current];
-      const newCat = formatTasksToCategoryText(newTasks, categoriesRef.current);
-      const newThm = formatTasksToThemeText(newTasks, themesRef.current);
+      const newCat = formatTasksToCategoryText(newTasks, categoriesRef.current, categoryCommentsRef.current);
+      const newThm = formatTasksToThemeText(newTasks, themesRef.current, themeCommentsRef.current);
 
       updateTasks(newTasks);
       updateCategoryText(newCat);
       updateThemeText(newThm);
-      saveToStorage(newTasks, newCat, newThm, categoriesRef.current, themesRef.current, remaining);
-      triggerBackgroundGitHubPush(newTasks, categoriesRef.current, themesRef.current, `restore: ${found.title}`);
+      saveToStorage(
+        newTasks,
+        newCat,
+        newThm,
+        categoriesRef.current,
+        themesRef.current,
+        remaining,
+        categoryCommentsRef.current,
+        themeCommentsRef.current
+      );
+      triggerBackgroundGitHubPush(
+        newTasks,
+        categoriesRef.current,
+        themesRef.current,
+        `restore: ${found.title}`,
+        remaining,
+        categoryCommentsRef.current,
+        themeCommentsRef.current
+      );
 
       showToast(`↩️「${found.title}」を未完了に復元しました`);
     },
@@ -770,23 +916,42 @@ export const App: React.FC = () => {
         themeName,
         tasksRef.current,
         completedTasksRef.current,
-        archiveData
+        archiveData,
+        themeCommentsRef.current
       );
 
       updateTasks(res.updatedTasks);
       updateCompletedTasks(res.updatedCompletedTasks);
       const newThms = res.updatedThemes(themesRef.current);
       updateThemes(newThms);
+      updateThemeComments(res.updatedThemeComments);
       setArchiveData(res.updatedArchive);
 
-      const newCat = formatTasksToCategoryText(res.updatedTasks, categoriesRef.current);
-      const newThm = formatTasksToThemeText(res.updatedTasks, newThms);
+      const newCat = formatTasksToCategoryText(res.updatedTasks, categoriesRef.current, categoryCommentsRef.current);
+      const newThm = formatTasksToThemeText(res.updatedTasks, newThms, res.updatedThemeComments);
       updateCategoryText(newCat);
       updateThemeText(newThm);
 
-      saveToStorage(res.updatedTasks, newCat, newThm, categoriesRef.current, newThms, res.updatedCompletedTasks);
+      saveToStorage(
+        res.updatedTasks,
+        newCat,
+        newThm,
+        categoriesRef.current,
+        newThms,
+        res.updatedCompletedTasks,
+        categoryCommentsRef.current,
+        res.updatedThemeComments
+      );
 
-      triggerBackgroundGitHubPush(res.updatedTasks, categoriesRef.current, newThms, `archive theme: ${themeName}`);
+      triggerBackgroundGitHubPush(
+        res.updatedTasks,
+        categoriesRef.current,
+        newThms,
+        `archive theme: ${themeName}`,
+        res.updatedCompletedTasks,
+        categoryCommentsRef.current,
+        res.updatedThemeComments
+      );
       const settings = loadGitHubSettings();
       if (settings) {
         pushArchiveToGitHubRepo(settings, res.updatedArchive);
@@ -807,16 +972,39 @@ export const App: React.FC = () => {
         const newThms = [res.restoredThemeName, ...themesRef.current.filter((th) => th !== res.restoredThemeName)];
         const newTasks = [...res.restoredTasks, ...tasksRef.current];
 
+        const updatedThmComments = { ...themeCommentsRef.current };
+        if (res.restoredComments && res.restoredComments.length > 0) {
+          updatedThmComments[res.restoredThemeName] = res.restoredComments;
+        }
+
         updateThemes(newThms);
         updateTasks(newTasks);
+        updateThemeComments(updatedThmComments);
 
-        const newCat = formatTasksToCategoryText(newTasks, categoriesRef.current);
-        const newThm = formatTasksToThemeText(newTasks, newThms);
+        const newCat = formatTasksToCategoryText(newTasks, categoriesRef.current, categoryCommentsRef.current);
+        const newThm = formatTasksToThemeText(newTasks, newThms, updatedThmComments);
         updateCategoryText(newCat);
         updateThemeText(newThm);
 
-        saveToStorage(newTasks, newCat, newThm, categoriesRef.current, newThms);
-        triggerBackgroundGitHubPush(newTasks, categoriesRef.current, newThms, `restore theme: ${themeName}`);
+        saveToStorage(
+          newTasks,
+          newCat,
+          newThm,
+          categoriesRef.current,
+          newThms,
+          undefined,
+          categoryCommentsRef.current,
+          updatedThmComments
+        );
+        triggerBackgroundGitHubPush(
+          newTasks,
+          categoriesRef.current,
+          newThms,
+          `restore theme: ${themeName}`,
+          undefined,
+          categoryCommentsRef.current,
+          updatedThmComments
+        );
 
         const settings = loadGitHubSettings();
         if (settings) {
@@ -845,25 +1033,43 @@ export const App: React.FC = () => {
     let currentTasks = tasksRef.current;
     let currentCats = categoriesRef.current;
     let currentThms = themesRef.current;
+    let currentCatComments = categoryCommentsRef.current;
+    let currentThmComments = themeCommentsRef.current;
+
     if (dirtyPane === 'category') {
       currentCats = extractCategorySections(categoryTextRef.current);
-      currentTasks = parseCategoryText(categoryTextRef.current, currentTasks);
+      const parsed = parseCategoryTextWithCompleted(categoryTextRef.current, currentTasks);
+      currentTasks = parsed.tasks;
+      currentCatComments = parsed.sectionComments;
       updateCategories(currentCats);
+      updateCategoryComments(currentCatComments);
     } else if (dirtyPane === 'theme') {
       currentThms = extractThemeSections(themeTextRef.current);
-      currentTasks = parseThemeText(themeTextRef.current, currentTasks);
+      const parsed = parseThemeTextWithCompleted(themeTextRef.current, currentTasks);
+      currentTasks = parsed.tasks;
+      currentThmComments = parsed.sectionComments;
       updateThemes(currentThms);
+      updateThemeComments(currentThmComments);
     }
 
     // Sort tasks globally by due date so all sections in both panes are sorted by due date
     const sorted = sortTasksByDueDate(currentTasks);
-    const newCatText = formatTasksToCategoryText(sorted, currentCats);
-    const newThmText = formatTasksToThemeText(sorted, currentThms);
+    const newCatText = formatTasksToCategoryText(sorted, currentCats, currentCatComments);
+    const newThmText = formatTasksToThemeText(sorted, currentThms, currentThmComments);
 
     updateTasks(sorted);
     updateCategoryText(newCatText);
     updateThemeText(newThmText);
-    saveToStorage(sorted, newCatText, newThmText, currentCats, currentThms);
+    saveToStorage(
+      sorted,
+      newCatText,
+      newThmText,
+      currentCats,
+      currentThms,
+      undefined,
+      currentCatComments,
+      currentThmComments
+    );
     updateDirtyPane(null);
 
     const label = '期日ソート';
@@ -873,7 +1079,15 @@ export const App: React.FC = () => {
     setHistoryState((prev) => addSnapshot(prev, label, newCatText, newThmText));
 
     // Background push
-    triggerBackgroundGitHubPush(sorted, currentCats, currentThms, label);
+    triggerBackgroundGitHubPush(
+      sorted,
+      currentCats,
+      currentThms,
+      label,
+      undefined,
+      currentCatComments,
+      currentThmComments
+    );
   }, [dirtyPane, saveToStorage, triggerBackgroundGitHubPush]);
 
   // Undo (restore previous snapshot in stack)
@@ -886,15 +1100,27 @@ export const App: React.FC = () => {
     const targetSnap = historyState.snapshots[targetIndex];
     if (!targetSnap) return;
 
-    const parsedTasks = parseCategoryText(targetSnap.categoryText);
+    const parsedCat = parseCategoryTextWithCompleted(targetSnap.categoryText);
+    const parsedThm = parseThemeTextWithCompleted(targetSnap.themeText);
     const parsedCats = extractCategorySections(targetSnap.categoryText);
     const parsedThms = extractThemeSections(targetSnap.themeText);
-    updateTasks(parsedTasks);
+    updateTasks(parsedCat.tasks);
     updateCategories(parsedCats);
     updateThemes(parsedThms);
+    updateCategoryComments(parsedCat.sectionComments);
+    updateThemeComments(parsedThm.sectionComments);
     updateCategoryText(targetSnap.categoryText);
     updateThemeText(targetSnap.themeText);
-    saveToStorage(parsedTasks, targetSnap.categoryText, targetSnap.themeText, parsedCats, parsedThms);
+    saveToStorage(
+      parsedCat.tasks,
+      targetSnap.categoryText,
+      targetSnap.themeText,
+      parsedCats,
+      parsedThms,
+      undefined,
+      parsedCat.sectionComments,
+      parsedThm.sectionComments
+    );
     updateDirtyPane(null);
 
     const newState: HistoryState = {
@@ -914,15 +1140,27 @@ export const App: React.FC = () => {
     const targetSnap = historyState.snapshots[targetIndex];
     if (!targetSnap) return;
 
-    const parsedTasks = parseCategoryText(targetSnap.categoryText);
+    const parsedCat = parseCategoryTextWithCompleted(targetSnap.categoryText);
+    const parsedThm = parseThemeTextWithCompleted(targetSnap.themeText);
     const parsedCats = extractCategorySections(targetSnap.categoryText);
     const parsedThms = extractThemeSections(targetSnap.themeText);
-    updateTasks(parsedTasks);
+    updateTasks(parsedCat.tasks);
     updateCategories(parsedCats);
     updateThemes(parsedThms);
+    updateCategoryComments(parsedCat.sectionComments);
+    updateThemeComments(parsedThm.sectionComments);
     updateCategoryText(targetSnap.categoryText);
     updateThemeText(targetSnap.themeText);
-    saveToStorage(parsedTasks, targetSnap.categoryText, targetSnap.themeText, parsedCats, parsedThms);
+    saveToStorage(
+      parsedCat.tasks,
+      targetSnap.categoryText,
+      targetSnap.themeText,
+      parsedCats,
+      parsedThms,
+      undefined,
+      parsedCat.sectionComments,
+      parsedThm.sectionComments
+    );
     updateDirtyPane(null);
 
     const newState: HistoryState = {

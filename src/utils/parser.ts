@@ -27,7 +27,24 @@ export const isDoneCategory = (cat: string): boolean => {
 export interface ParseTasksResult {
   tasks: TaskItem[];
   completedTasks: CompletedTaskItem[];
+  sectionComments: Record<string, string[]>;
 }
+
+/**
+ * Helper to get comments for a section case-insensitively.
+ */
+export const getCommentsForSection = (
+  commentsMap: Record<string, string[]> | undefined,
+  sectionName: string
+): string[] => {
+  if (!commentsMap || !sectionName) return [];
+  if (commentsMap[sectionName] && commentsMap[sectionName].length > 0) {
+    return commentsMap[sectionName];
+  }
+  const lower = sectionName.toLowerCase();
+  const matchedKey = Object.keys(commentsMap).find((k) => k.toLowerCase() === lower);
+  return matchedKey && commentsMap[matchedKey] ? commentsMap[matchedKey] : [];
+};
 
 /**
  * Strip leading bullet characters ('・', '･', '•') and any leading whitespace from task title.
@@ -118,6 +135,7 @@ export const parseCategoryTextWithCompleted = (
   const lines = text.split('\n');
   const tasks: TaskItem[] = [];
   const completedTasks: CompletedTaskItem[] = [...existingCompletedTasks];
+  const sectionComments: Record<string, string[]> = {};
 
   let currentCategory = 'inbox';
   let currentTask: TaskItem | null = null;
@@ -136,6 +154,9 @@ export const parseCategoryTextWithCompleted = (
       currentCategory = rawLine.trim().replace(/^[!！]/, '').trim() || 'inbox';
       currentTask = null;
       currentCompletedTask = null;
+      if (!sectionComments[currentCategory]) {
+        sectionComments[currentCategory] = [];
+      }
       continue;
     }
 
@@ -146,6 +167,12 @@ export const parseCategoryTextWithCompleted = (
         currentTask.comments.push(commentText);
       } else if (currentCompletedTask) {
         currentCompletedTask.comments.push(commentText);
+      } else {
+        // Section-level comment directly below category header
+        if (!sectionComments[currentCategory]) {
+          sectionComments[currentCategory] = [];
+        }
+        sectionComments[currentCategory].push(commentText);
       }
       continue;
     }
@@ -224,7 +251,7 @@ export const parseCategoryTextWithCompleted = (
     tasks.push(currentTask);
   }
 
-  return { tasks, completedTasks };
+  return { tasks, completedTasks, sectionComments };
 };
 
 export const parseCategoryText = (
@@ -248,6 +275,7 @@ export const parseThemeTextWithCompleted = (
   const lines = text.split('\n');
   const tasks: TaskItem[] = [];
   const completedTasks: CompletedTaskItem[] = [...existingCompletedTasks];
+  const sectionComments: Record<string, string[]> = {};
 
   let currentTheme = 'Uncategorized';
   let currentTask: TaskItem | null = null;
@@ -267,6 +295,9 @@ export const parseThemeTextWithCompleted = (
       currentTheme = trimmed.slice(1, -1).trim() || 'Uncategorized';
       currentTask = null;
       currentCompletedTask = null;
+      if (!sectionComments[currentTheme]) {
+        sectionComments[currentTheme] = [];
+      }
       continue;
     }
 
@@ -277,6 +308,12 @@ export const parseThemeTextWithCompleted = (
         currentTask.comments.push(commentText);
       } else if (currentCompletedTask) {
         currentCompletedTask.comments.push(commentText);
+      } else {
+        // Section-level comment directly below theme header
+        if (!sectionComments[currentTheme]) {
+          sectionComments[currentTheme] = [];
+        }
+        sectionComments[currentTheme].push(commentText);
       }
       continue;
     }
@@ -355,7 +392,7 @@ export const parseThemeTextWithCompleted = (
     tasks.push(currentTask);
   }
 
-  return { tasks, completedTasks };
+  return { tasks, completedTasks, sectionComments };
 };
 
 export const parseThemeText = (
@@ -452,12 +489,20 @@ export const organizeSections = (sections: string[], defaultSection: string): st
  */
 export const formatTasksToCategoryText = (
   tasks: TaskItem[],
-  customCategories?: string[]
+  customCategories?: string[],
+  categoryComments?: Record<string, string[]>
 ): string => {
   const categoryList: string[] = [...(customCategories || [])];
   tasks.forEach((t) => {
     if (t.category) categoryList.push(t.category);
   });
+  if (categoryComments) {
+    Object.keys(categoryComments).forEach((cat) => {
+      if (categoryComments[cat] && categoryComments[cat].length > 0) {
+        categoryList.push(cat);
+      }
+    });
+  }
 
   const orderedCategories = organizeSections(categoryList, 'inbox');
   const sections: string[] = [];
@@ -465,12 +510,18 @@ export const formatTasksToCategoryText = (
   for (const cat of orderedCategories) {
     const catTasks = tasks.filter((t) => (t.category || 'inbox').toLowerCase() === cat.toLowerCase());
     const isExplicit = customCategories && customCategories.some((c) => c.toLowerCase() === cat.toLowerCase());
-    // Output if there are tasks, or if explicitly declared in customCategories, or if default 'inbox'
-    if (catTasks.length === 0 && !isExplicit && cat.toLowerCase() !== 'inbox') {
+    const comments = getCommentsForSection(categoryComments, cat);
+    // Output if there are tasks, or comments, or if explicitly declared in customCategories, or if default 'inbox'
+    if (catTasks.length === 0 && comments.length === 0 && !isExplicit && cat.toLowerCase() !== 'inbox') {
       continue;
     }
 
     const lines: string[] = [`!${cat}`];
+
+    // Output section comments directly below category header
+    for (const comment of comments) {
+      lines.push(`  ${comment}`);
+    }
 
     for (const task of catTasks) {
       const cleanTitle = cleanTaskTitle(task.title);
@@ -503,12 +554,20 @@ export const formatTasksToCategoryText = (
  */
 export const formatTasksToThemeText = (
   tasks: TaskItem[],
-  customThemes?: string[]
+  customThemes?: string[],
+  themeComments?: Record<string, string[]>
 ): string => {
   const themeList: string[] = [...(customThemes || [])];
   tasks.forEach((t) => {
     if (t.theme) themeList.push(t.theme);
   });
+  if (themeComments) {
+    Object.keys(themeComments).forEach((th) => {
+      if (themeComments[th] && themeComments[th].length > 0) {
+        themeList.push(th);
+      }
+    });
+  }
 
   const orderedThemes = organizeSections(themeList, 'Uncategorized');
   const sections: string[] = [];
@@ -516,12 +575,18 @@ export const formatTasksToThemeText = (
   for (const theme of orderedThemes) {
     const themeTasks = tasks.filter((t) => (t.theme || 'Uncategorized').toLowerCase() === theme.toLowerCase());
     const isExplicit = customThemes && customThemes.some((th) => th.toLowerCase() === theme.toLowerCase());
-    // Output if there are tasks, or if explicitly declared in customThemes, or if default 'Uncategorized'
-    if (themeTasks.length === 0 && !isExplicit && theme.toLowerCase() !== 'uncategorized') {
+    const comments = getCommentsForSection(themeComments, theme);
+    // Output if there are tasks, or comments, or if explicitly declared in customThemes, or if default 'Uncategorized'
+    if (themeTasks.length === 0 && comments.length === 0 && !isExplicit && theme.toLowerCase() !== 'uncategorized') {
       continue;
     }
 
     const lines: string[] = [`[${theme}]`];
+
+    // Output section comments directly below theme header
+    for (const comment of comments) {
+      lines.push(`  ${comment}`);
+    }
 
     for (const task of themeTasks) {
       const cleanTitle = cleanTaskTitle(task.title);
