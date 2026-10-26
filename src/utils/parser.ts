@@ -425,11 +425,7 @@ export const organizeSections = (sections: string[], defaultSection: string): st
     }
   }
 
-  // Filter out defaultSection (appended at bottom) and staging sections (prepended at top)
-  const topSections = uniqueList.filter((s) => {
-    const root = s.split(':')[0].trim().toLowerCase();
-    return root === 'staging' || root === 'ステージング';
-  });
+  // Filter out defaultSection (appended at bottom) and ignore staging sections in main editor
   const nonDefaults = uniqueList.filter((s) => {
     const root = s.split(':')[0].trim().toLowerCase();
     return s.toLowerCase() !== defaultLower && root !== 'staging' && root !== 'ステージング';
@@ -478,8 +474,8 @@ export const organizeSections = (sections: string[], defaultSection: string): st
     return (origIndexMap.get(a) ?? 0) - (origIndexMap.get(b) ?? 0);
   });
 
-  // Always put staging sections at the very top, and defaultSection at the very bottom
-  return [...topSections, ...nonDefaults, defaultSection];
+  // Put defaultSection at the very bottom
+  return [...nonDefaults, defaultSection];
 };
 
 /**

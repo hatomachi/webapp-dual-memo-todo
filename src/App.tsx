@@ -47,6 +47,8 @@ import {
   loadStagingData,
   persistStagingData,
   separateStagingTasks,
+  fetchStagingData,
+  syncStagingSave,
   fetchStagingFromGitHubRepo,
   pushStagingToGitHubRepo,
   isStagingCategory,
@@ -277,9 +279,69 @@ export const App: React.FC = () => {
   const syncWithRemote = useCallback(
     async (silent = false) => {
       const settings = loadGitHubSettings();
-      if (!settings || !settings.token || !settings.owner || !settings.repo) {
+
+      // 1. Fetch staging tasks (local dev API prioritized, then GitHub)
+      try {
+        const freshStaging = await fetchStagingData(settings);
+        if (freshStaging) {
+          updateStagingData(freshStaging);
+        }
+      } catch (e) {
+        console.warn('Failed to fetch staging data:', e);
+      }
+
+      // If user has no Git settings (e.g. running on localhost:5173), try fetching from local data API
+      const isConfigured = Boolean(
+        settings &&
+        settings.token &&
+        (settings.provider === 'gitlab' || settings.owner) &&
+        settings.repo
+      );
+      if (!settings || !isConfigured) {
+        try {
+          const localRes = await fetch('/api/local/data', { cache: 'no-store' });
+          if (localRes.ok) {
+            const payload = await localRes.json();
+            if (payload && Array.isArray(payload.tasks) && dirtyPaneRef.current === null) {
+              const loadedTasks: TaskItem[] = payload.tasks;
+              const loadedCats: string[] = Array.isArray(payload.categories) ? payload.categories : [];
+              const loadedThms: string[] = Array.isArray(payload.themes) ? payload.themes : [];
+              const loadedCatComments: Record<string, string[]> = payload.categoryComments || {};
+              const loadedThmComments: Record<string, string[]> = payload.themeComments || {};
+
+              if (Array.isArray(payload.completedTasks)) {
+                updateCompletedTasks(payload.completedTasks);
+              }
+
+              const sortedLoadedTasks = sortTasksByDueDate(loadedTasks);
+              const newCat = formatTasksToCategoryText(sortedLoadedTasks, loadedCats, loadedCatComments);
+              const newThm = formatTasksToThemeText(sortedLoadedTasks, loadedThms, loadedThmComments);
+
+              updateTasks(sortedLoadedTasks);
+              updateCategories(loadedCats);
+              updateThemes(loadedThms);
+              updateCategoryComments(loadedCatComments);
+              updateThemeComments(loadedThmComments);
+              updateCategoryText(newCat);
+              updateThemeText(newThm);
+              saveToStorage(
+                sortedLoadedTasks,
+                newCat,
+                newThm,
+                loadedCats,
+                loadedThms,
+                undefined,
+                loadedCatComments,
+                loadedThmComments
+              );
+            }
+          }
+        } catch {
+          // not running local dev API or request failed
+        }
         return;
       }
+
       // If user is currently editing (dirty), do not overwrite!
       if (dirtyPaneRef.current !== null) {
         return;
@@ -320,16 +382,6 @@ export const App: React.FC = () => {
             setArchiveData(remoteArchive);
           }
         }).catch(() => {});
-
-        // Fetch staging tasks from GitHub
-        try {
-          const remoteStaging = await fetchStagingFromGitHubRepo(settings);
-          if (remoteStaging) {
-            updateStagingData(remoteStaging);
-          }
-        } catch (e) {
-          console.warn('Failed to fetch remote staging:', e);
-        }
 
         // Sort tasks globally by due date so both panes (categories and themes) are naturally ordered by due date
         const sortedLoadedTasks = sortTasksByDueDate(loadedTasks);
@@ -398,10 +450,13 @@ export const App: React.FC = () => {
       customThmComments?: Record<string, string[]>
     ) => {
       const settings = loadGitHubSettings();
-      if (!settings || !settings.token || !settings.owner || !settings.repo) {
-        return;
-      }
-      if (!settings.autoSyncOnSave) {
+      const isConfigured = Boolean(
+        settings &&
+        settings.token &&
+        (settings.provider === 'gitlab' || settings.owner) &&
+        settings.repo
+      );
+      if (!settings || !isConfigured || !settings.autoSyncOnSave) {
         return;
       }
 
@@ -424,9 +479,9 @@ export const App: React.FC = () => {
         setLastSyncedAt(now);
         persistLastSyncedAt(now);
       } catch (err: any) {
-        console.error('Background GitHub push failed:', err);
+        console.error('Background Git push failed:', err);
         setSyncStatus('error');
-        setSyncErrorMessage(err.message || 'GitHub同期エラー');
+        setSyncErrorMessage(err.message || 'リモート同期エラー');
       }
     },
     []
@@ -1021,13 +1076,9 @@ export const App: React.FC = () => {
       };
       updateStagingData(updatedStaging);
 
-      // Background push staging to GitHub if configured
+      // Save staging to local API and GitHub if configured
       const settings = loadGitHubSettings();
-      if (settings && settings.autoSyncOnSave) {
-        pushStagingToGitHubRepo(settings, updatedStaging).catch((err) => {
-          console.warn('Failed to push updated staging to GitHub:', err);
-        });
-      }
+      syncStagingSave(settings, updatedStaging);
 
       // 2. Add to main active tasks
       const newTask: TaskItem = {
@@ -1087,11 +1138,7 @@ export const App: React.FC = () => {
     updateStagingData(updatedStaging);
 
     const settings = loadGitHubSettings();
-    if (settings && settings.autoSyncOnSave) {
-      pushStagingToGitHubRepo(settings, updatedStaging).catch((err) => {
-        console.warn('Failed to push updated staging to GitHub:', err);
-      });
-    }
+    syncStagingSave(settings, updatedStaging);
 
     showToast(`🗑️ 「${target?.title || 'タスク'}」を破棄しました`);
   }, []);
@@ -1279,11 +1326,14 @@ export const App: React.FC = () => {
     [historyState, saveToStorage]
   );
 
-  // Manual GitHub Pull
+  // Manual Git Pull
   const handleManualPull = useCallback(async () => {
     const settings = gitHubSettings || loadGitHubSettings();
-    if (!settings || !settings.token || !settings.owner || !settings.repo) {
-      throw new Error('GitHub設定を入力してください');
+    const isGitLab = settings?.provider === 'gitlab';
+    const providerName = isGitLab ? 'GitLab' : 'GitHub';
+
+    if (!settings || !settings.token || (!isGitLab && !settings.owner) || !settings.repo) {
+      throw new Error(`${providerName}設定を入力してください`);
     }
 
     setSyncStatus('syncing');
@@ -1332,21 +1382,24 @@ export const App: React.FC = () => {
       setLastSyncedAt(now);
       persistLastSyncedAt(now);
 
-      const label = 'GitHubから取得 (Pull)';
+      const label = `${providerName}から取得 (Pull)`;
       setHistoryState((prev) => addSnapshot(prev, label, newCat, newThm));
-      showToast('☁️ GitHubから最新データを取得しました');
+      showToast(`☁️ ${providerName}から最新データを取得しました`);
     } catch (err: any) {
       setSyncStatus('error');
-      setSyncErrorMessage(err.message || 'GitHub取得エラー');
+      setSyncErrorMessage(err.message || `${providerName}取得エラー`);
       throw err;
     }
   }, [gitHubSettings, saveToStorage]);
 
-  // Manual GitHub Push
+  // Manual Git Push
   const handleManualPush = useCallback(async () => {
     const settings = gitHubSettings || loadGitHubSettings();
-    if (!settings || !settings.token || !settings.owner || !settings.repo) {
-      throw new Error('GitHub設定を入力してください');
+    const isGitLab = settings?.provider === 'gitlab';
+    const providerName = isGitLab ? 'GitLab' : 'GitHub';
+
+    if (!settings || !settings.token || (!isGitLab && !settings.owner) || !settings.repo) {
+      throw new Error(`${providerName}設定を入力してください`);
     }
 
     setSyncStatus('syncing');
@@ -1362,11 +1415,13 @@ export const App: React.FC = () => {
         updatedAt: new Date().toISOString(),
         categories: currentCats,
         themes: currentThms,
+        categoryComments: categoryCommentsRef.current,
+        themeComments: themeCommentsRef.current,
         tasks: mainTasks,
         completedTasks: completedTasksRef.current,
       };
 
-      await pushToGitHub(settings, payload, 'chore: manual push from Dual Memo PWA');
+      await pushToGitHub(settings, payload, `chore: manual push from Dual Memo PWA (${providerName})`);
       await pushStagingToGitHubRepo(settings, stagingDataRef.current).catch((e) => {
         console.warn('Manual push of staging failed:', e);
       });
@@ -1374,19 +1429,20 @@ export const App: React.FC = () => {
       const now = Date.now();
       setLastSyncedAt(now);
       persistLastSyncedAt(now);
-      showToast('☁️ GitHubへバックアップ保存しました');
+      showToast(`☁️ ${providerName}へバックアップ保存しました`);
     } catch (err: any) {
       setSyncStatus('error');
-      setSyncErrorMessage(err.message || 'GitHub保存エラー');
+      setSyncErrorMessage(err.message || `${providerName}保存エラー`);
       throw err;
     }
   }, [gitHubSettings]);
 
-  // Save GitHub Settings handler
+  // Save Git Settings handler
   const handleSaveSettings = (settings: GitHubSettings) => {
     persistGitHubSettings(settings);
     setGitHubSettings(settings);
-    showToast('⚙️ GitHub設定を保存しました');
+    const providerName = settings.provider === 'gitlab' ? 'GitLab' : 'GitHub';
+    showToast(`⚙️ ${providerName}設定を保存しました`);
   };
 
   // QuickToolbar helper targets
@@ -1455,7 +1511,12 @@ export const App: React.FC = () => {
           onToggleHistory={() => setIsHistoryOpen(true)}
           onToggleArchive={() => setIsArchiveModalOpen(true)}
           archiveThemeCount={archiveData.archivedThemes.length}
-          onToggleStaging={() => setIsStagingDrawerOpen(true)}
+          onToggleStaging={() => {
+            setIsStagingDrawerOpen(true);
+            fetchStagingData(loadGitHubSettings()).then((fresh) => {
+              if (fresh) updateStagingData(fresh);
+            }).catch(() => {});
+          }}
           stagingCount={stagingData.tasks.length}
           onToggleSettings={() => setIsSettingsOpen(true)}
           canUndo={canUndo}
@@ -1464,6 +1525,7 @@ export const App: React.FC = () => {
           onRedo={handleRedo}
           historyCount={historyState.snapshots.length}
           syncStatus={syncStatus}
+          gitProvider={gitHubSettings?.provider || 'github'}
           activeMobilePane={activeMobilePane}
           onChangeMobilePane={setActiveMobilePane}
           isSaved={dirtyPane === null}

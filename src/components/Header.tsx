@@ -14,7 +14,7 @@ import {
   CheckCircle2,
   Inbox,
 } from 'lucide-react';
-import { SyncStatus } from '../types/github';
+import { SyncStatus, GitProvider } from '../types/github';
 
 interface HeaderProps {
   onSortDueDates: () => void;
@@ -32,6 +32,7 @@ interface HeaderProps {
   onRedo: () => void;
   historyCount: number;
   syncStatus: SyncStatus;
+  gitProvider?: GitProvider;
   activeMobilePane: PaneType;
   onChangeMobilePane: (pane: PaneType) => void;
   isSaved: boolean;
@@ -53,6 +54,7 @@ export const Header: React.FC<HeaderProps> = ({
   onRedo,
   historyCount,
   syncStatus,
+  gitProvider = 'github',
   activeMobilePane,
   onChangeMobilePane,
   isSaved,
@@ -208,11 +210,11 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          {/* GitHub Sync & Settings Button */}
+          {/* Git Sync & Settings Button */}
           <button
             type="button"
             onClick={onToggleSettings}
-            title="データ永続化設定 (GitHub同期)"
+            title={`データ永続化設定 (${gitProvider === 'gitlab' ? 'GitLab' : 'GitHub'}同期)`}
             className={`p-1.5 rounded-md transition-colors ${
               syncStatus === 'syncing'
                 ? 'text-blue-600 bg-blue-50 animate-pulse'

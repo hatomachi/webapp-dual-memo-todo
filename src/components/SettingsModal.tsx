@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { GitHubSettings, SyncStatus } from '../types/github';
+import { GitHubSettings, SyncStatus, GitProvider } from '../types/github';
+import { testGitConnection } from '../utils/githubSync';
 import { APP_BUILD_TIME, clearPwaCacheAndReload } from '../utils/pwaUpdate';
 import {
   X,
   Settings,
   Github,
+  Gitlab,
   CloudUpload,
   CloudDownload,
   Eye,
@@ -39,6 +41,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   lastSyncedAt,
   errorMessage,
 }) => {
+  const [provider, setProvider] = useState<GitProvider>('github');
+  const [baseUrl, setBaseUrl] = useState('');
   const [token, setToken] = useState('');
   const [owner, setOwner] = useState('');
   const [repo, setRepo] = useState('');
@@ -50,10 +54,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+    username?: string;
+    detectedBranch?: string;
+  } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (settings) {
+      setProvider(settings.provider || 'github');
+      setBaseUrl(settings.baseUrl || '');
       setToken(settings.token || '');
       setOwner(settings.owner || '');
       setRepo(settings.repo || '');
@@ -62,6 +75,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setStagingPath(settings.stagingPath || 'todo-staging.json');
       setAutoSyncOnSave(settings.autoSyncOnSave !== false);
     }
+    setTestResult(null);
+    setActionError(null);
   }, [settings, isOpen]);
 
   if (!isOpen) return null;
@@ -69,6 +84,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     const newSettings: GitHubSettings = {
+      provider,
+      baseUrl: baseUrl.trim(),
       token: token.trim(),
       owner: owner.trim(),
       repo: repo.trim(),
@@ -80,6 +97,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     onSaveSettings(newSettings);
     setSaveSuccessNotice(true);
     setTimeout(() => setSaveSuccessNotice(false), 2000);
+  };
+
+  const handleTestConnection = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    setActionError(null);
+    try {
+      const tempSettings: GitHubSettings = {
+        provider,
+        baseUrl: baseUrl.trim(),
+        token: token.trim(),
+        owner: owner.trim(),
+        repo: repo.trim(),
+        branch: branch.trim() || 'main',
+        path: path.trim().replace(/^\/+/, '') || 'todo-data.json',
+        stagingPath: stagingPath.trim().replace(/^\/+/, '') || 'todo-staging.json',
+        autoSyncOnSave,
+      };
+      const res = await testGitConnection(tempSettings);
+      setTestResult(res);
+    } catch (err: any) {
+      setTestResult({
+        success: false,
+        message: err.message || '接続テスト中に例外が発生しました',
+      });
+    } finally {
+      setIsTesting(false);
+    }
   };
 
   const handlePullClick = async () => {
@@ -107,7 +152,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleClearCacheClick = async () => {
-    if (!window.confirm('ブラウザキャッシュをクリアしてアプリの最新版を再取得しますか？\n（※メモデータや設定は保持されます）')) {
+    if (
+      !window.confirm(
+        'ブラウザキャッシュをクリアしてアプリの最新版を再取得しますか？\n（※メモデータや設定は保持されます）'
+      )
+    ) {
       return;
     }
     setIsClearingCache(true);
@@ -127,6 +176,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   };
 
+  const isGitLab = provider === 'gitlab';
+  const providerLabel = isGitLab ? 'GitLab' : 'GitHub';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
       <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
@@ -135,7 +187,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="flex items-center gap-2">
             <Settings className="w-5 h-5 text-slate-700" />
             <h2 className="text-sm font-bold text-slate-800">
-              設定 & GitHub Private Repo データ同期
+              設定 & データ同期 ({providerLabel})
             </h2>
           </div>
           <button
@@ -177,30 +229,103 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
+          {/* Provider Selection Tabs */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-700 block">
+              同期プロバイダー
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setProvider('github');
+                  setTestResult(null);
+                }}
+                className={`py-2 px-3 rounded-lg border text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                  !isGitLab
+                    ? 'border-slate-800 bg-slate-900 text-white shadow-sm'
+                    : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Github className="w-4 h-4" />
+                <span>GitHub (個人)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setProvider('gitlab');
+                  setTestResult(null);
+                }}
+                className={`py-2 px-3 rounded-lg border text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                  isGitLab
+                    ? 'border-orange-500 bg-orange-600 text-white shadow-sm'
+                    : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Gitlab className="w-4 h-4" />
+                <span>GitLab (社内 / クラウド)</span>
+              </button>
+            </div>
+          </div>
+
           {/* Settings Form */}
           <form onSubmit={handleSave} className="space-y-4">
+            {/* GitLab Base URL */}
+            {isGitLab && (
+              <div className="p-3 bg-orange-50/70 border border-orange-200 rounded-lg space-y-1 animate-fadeIn">
+                <label className="text-xs font-semibold text-orange-950 flex items-center gap-1">
+                  <Gitlab className="w-3.5 h-3.5 text-orange-600" />
+                  GitLab サーバー URL (Base URL)
+                </label>
+                <input
+                  type="url"
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder="例: https://gitlab.internal.example.com"
+                  className="w-full px-3 py-2 text-xs border border-orange-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono bg-white"
+                />
+                <p className="text-[10px] text-orange-800">
+                  ※空欄の場合は <code>https://gitlab.com</code> を使用します。社内GitLabのURL（ALBやプロキシパス含む）を指定してください。
+                </p>
+              </div>
+            )}
+
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
-                  <Github className="w-3.5 h-3.5" />
-                  GitHub Personal Access Token (PAT)
+                  {isGitLab ? (
+                    <Gitlab className="w-3.5 h-3.5 text-orange-600" />
+                  ) : (
+                    <Github className="w-3.5 h-3.5" />
+                  )}
+                  {isGitLab ? 'GitLab Personal Access Token (PAT)' : 'GitHub Personal Access Token (PAT)'}
                 </label>
-                <a
-                  href="https://github.com/settings/tokens?type=beta"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[11px] text-blue-600 hover:underline flex items-center gap-0.5"
-                >
-                  <HelpCircle className="w-3 h-3" />
-                  Fine-grained PAT作成
-                </a>
+                {!isGitLab ? (
+                  <a
+                    href="https://github.com/settings/tokens?type=beta"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[11px] text-blue-600 hover:underline flex items-center gap-0.5"
+                  >
+                    <HelpCircle className="w-3 h-3" />
+                    Fine-grained PAT作成
+                  </a>
+                ) : (
+                  <span className="text-[10px] text-orange-700 bg-orange-100 px-1.5 py-0.5 rounded font-mono">
+                    read_api, write_repository
+                  </span>
+                )}
               </div>
               <div className="relative">
                 <input
                   type={showToken ? 'text' : 'password'}
                   value={token}
                   onChange={(e) => setToken(e.target.value)}
-                  placeholder="github_pat_xxxx または ghp_xxxx"
+                  placeholder={
+                    isGitLab
+                      ? 'glpat-xxxxxxxxxxxxxxxxxxxx'
+                      : 'github_pat_xxxx または ghp_xxxx'
+                  }
                   className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono pr-9"
                 />
                 <button
@@ -212,33 +337,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </button>
               </div>
               <p className="text-[10px] text-slate-400 mt-1">
-                ※トークンはブラウザ内（LocalStorage）のみに安全に保存されます。対象リポジトリのみのアクセス権限を持つ Fine-grained PAT を推奨します。
+                ※トークンはこの端末のブラウザ（LocalStorage）にのみ安全に保存されます。端末と{isGitLab ? '社内GitLab' : 'GitHub'}が直接暗号化通信を行います。
               </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  GitHub ユーザー名 (Owner)
+                  {isGitLab ? 'グループ / 名前空間' : 'GitHub ユーザー名 (Owner)'}
                 </label>
                 <input
                   type="text"
                   value={owner}
                   onChange={(e) => setOwner(e.target.value)}
-                  placeholder="例: hatomachi"
+                  placeholder={isGitLab ? '例: dev-team (空欄可)' : '例: hatomachi'}
                   className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  リポジトリ名 (Repo)
+                  {isGitLab ? 'プロジェクト名 / ID *' : 'リポジトリ名 (Repo) *'}
                 </label>
                 <input
                   type="text"
+                  required
                   value={repo}
                   onChange={(e) => setRepo(e.target.value)}
-                  placeholder="例: dual-memo-data"
+                  placeholder={isGitLab ? '例: dual-memo-data または 12345' : '例: dual-memo-data'}
                   className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -297,20 +423,60 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
               />
               <label htmlFor="autoSync" className="text-xs text-slate-700 cursor-pointer select-none">
-                反映（Ctrl+S）時に自動でGitHubへもバックグラウンドプッシュする
+                反映（Ctrl+S）時に自動で{providerLabel}へもバックグラウンドプッシュする
               </label>
             </div>
 
-            <div className="flex items-center justify-between pt-2">
-              <span className="text-xs text-emerald-600 font-medium">
-                {saveSuccessNotice && '✓ 設定を保存しました'}
-              </span>
-              <button
-                type="submit"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all"
+            {/* Test Connection Result */}
+            {testResult && (
+              <div
+                className={`p-3 rounded-lg text-xs flex items-start gap-2.5 transition-all ${
+                  testResult.success
+                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                    : 'bg-rose-50 border border-rose-200 text-rose-800'
+                }`}
               >
-                設定を保存
+                {testResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-600 mt-0.5 flex-shrink-0" />
+                )}
+                <div>
+                  <p className="font-bold">
+                    {testResult.success ? '接続テスト成功' : '接続テスト失敗'}
+                  </p>
+                  <p className="text-[11px] mt-0.5 leading-relaxed">{testResult.message}</p>
+                  {testResult.username && (
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      認証ユーザー: <span className="font-mono font-semibold">{testResult.username}</span>
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={isTesting || !token || !repo}
+                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 transition-all flex items-center gap-1.5 active:scale-95"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin' : ''}`} />
+                <span>{isTesting ? '接続テスト中...' : '🔌 接続テスト'}</span>
               </button>
+
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-emerald-600 font-medium">
+                  {saveSuccessNotice && '✓ 設定を保存しました'}
+                </span>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all"
+                >
+                  設定を保存
+                </button>
+              </div>
             </div>
           </form>
 
@@ -321,21 +487,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <button
                 type="button"
                 onClick={handlePullClick}
-                disabled={isProcessing || !token || !owner || !repo}
+                disabled={isProcessing || !token || !repo}
                 className="flex items-center justify-center gap-1.5 px-3 py-2.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 transition-all active:scale-95"
               >
                 <CloudDownload className="w-4 h-4 text-indigo-600" />
-                <span>GitHubから取得 (Pull)</span>
+                <span>{providerLabel}から取得 (Pull)</span>
               </button>
 
               <button
                 type="button"
                 onClick={handlePushClick}
-                disabled={isProcessing || !token || !owner || !repo}
+                disabled={isProcessing || !token || !repo}
                 className="flex items-center justify-center gap-1.5 px-3 py-2.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 transition-all active:scale-95"
               >
                 <CloudUpload className="w-4 h-4 text-blue-600" />
-                <span>GitHubへ保存 (Push)</span>
+                <span>{providerLabel}へ保存 (Push)</span>
               </button>
             </div>
             <p className="text-[10px] text-slate-400 mt-2">

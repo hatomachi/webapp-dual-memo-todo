@@ -115,6 +115,80 @@ export const separateStagingTasks = (
 };
 
 /**
+ * Fetch staging data from local Vite middleware API if available
+ */
+export const fetchStagingFromLocalApi = async (): Promise<StagingData | null> => {
+  try {
+    const res = await fetch('/api/local/staging', { cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.tasks)) {
+        persistStagingData(data);
+        return data as StagingData;
+      }
+    }
+  } catch {
+    // silently ignore if not running in local Vite dev server
+  }
+  return null;
+};
+
+/**
+ * Save staging data to local Vite middleware API if available
+ */
+export const saveStagingToLocalApi = async (stagingData: StagingData): Promise<boolean> => {
+  try {
+    const res = await fetch('/api/local/staging', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(stagingData, null, 2),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Sync staging data: prioritizes local dev API if available, falls back to GitHub settings
+ */
+export const fetchStagingData = async (
+  settings: GitHubSettings | null
+): Promise<StagingData | null> => {
+  // 1. Try local dev server API first
+  const localData = await fetchStagingFromLocalApi();
+  if (localData) {
+    return localData;
+  }
+
+  // 2. Fall back to GitHub
+  if (settings && settings.token && settings.owner && settings.repo) {
+    return fetchStagingFromGitHubRepo(settings);
+  }
+
+  return null;
+};
+
+/**
+ * Save staging data: updates local dev server API if available, and pushes to GitHub if configured
+ */
+export const syncStagingSave = async (
+  settings: GitHubSettings | null,
+  stagingData: StagingData
+): Promise<void> => {
+  persistStagingData(stagingData);
+  // Try local API
+  saveStagingToLocalApi(stagingData).catch(() => {});
+
+  // Try GitHub API
+  if (settings && settings.token && settings.owner && settings.repo && settings.autoSyncOnSave) {
+    pushStagingToGitHubRepo(settings, stagingData).catch((err) => {
+      console.warn('Failed to push updated staging to GitHub:', err);
+    });
+  }
+};
+
+/**
  * Sync staging data with GitHub
  */
 export const fetchStagingFromGitHubRepo = async (

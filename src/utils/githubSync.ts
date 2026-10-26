@@ -1,4 +1,12 @@
 import { GitHubSettings, RemotePayload } from '../types/github';
+import {
+  fetchRemoteGitLabFileInfo,
+  fetchFromGitLab,
+  pushToGitLab,
+  fetchCustomJsonFromGitLab,
+  pushCustomJsonToGitLab,
+  testGitLabConnection,
+} from './gitlabSync';
 
 const STORAGE_KEY_GITHUB_SETTINGS = 'dual_memo_github_settings_v1';
 const STORAGE_KEY_GITHUB_SHA = 'dual_memo_github_sha_v1';
@@ -71,23 +79,33 @@ export const base64ToUtf8 = (base64: string): string => {
 };
 
 /**
- * Normalize and sanitize GitHub settings to prevent invalid API calls
+ * Normalize and sanitize GitHub / GitLab settings to prevent invalid API calls
  */
 export const normalizeGitHubSettings = (settings: GitHubSettings): GitHubSettings => {
+  const provider = settings.provider === 'gitlab' ? 'gitlab' : 'github';
+  const baseUrl = (settings.baseUrl || '').trim();
   const owner = (settings.owner || '').trim();
   const repo = (settings.repo || '').trim();
   const branch = (settings.branch || '').trim() || 'main';
   let path = (settings.path || '').trim() || 'todo-data.json';
-  // Strip leading slashes to prevent double slashes in GitHub contents API URLs
+  // Strip leading slashes to prevent double slashes in contents API URLs
   path = path.replace(/^\/+/, '');
+  let stagingPath = (settings.stagingPath || '').trim() || 'todo-staging.json';
+  stagingPath = stagingPath.replace(/^\/+/, '');
+  let archivePath = (settings.archivePath || '').trim() || 'todo-archive.json';
+  archivePath = archivePath.replace(/^\/+/, '');
   const token = (settings.token || '').trim();
   const autoSyncOnSave = settings.autoSyncOnSave !== false;
 
   return {
+    provider,
+    baseUrl,
     owner,
     repo,
     branch,
     path,
+    stagingPath,
+    archivePath,
     token,
     autoSyncOnSave,
   };
@@ -106,6 +124,10 @@ export interface RemoteFileInfo {
 export const fetchRemoteFileInfo = async (
   rawSettings: GitHubSettings
 ): Promise<RemoteFileInfo> => {
+  if (rawSettings.provider === 'gitlab') {
+    return fetchRemoteGitLabFileInfo(rawSettings, rawSettings.path || 'todo-data.json');
+  }
+
   const settings = normalizeGitHubSettings(rawSettings);
   const { token, owner, repo, branch, path } = settings;
 
@@ -167,11 +189,15 @@ export const fetchRemoteSha = async (rawSettings: GitHubSettings): Promise<strin
 };
 
 /**
- * Fetch remote todo-data.json from GitHub repository with strict cache busting
+ * Fetch remote todo-data.json from GitHub / GitLab repository with strict cache busting
  */
 export const fetchFromGitHub = async (
   rawSettings: GitHubSettings
 ): Promise<{ payload: RemotePayload; sha: string }> => {
+  if (rawSettings.provider === 'gitlab') {
+    return fetchFromGitLab(rawSettings);
+  }
+
   const info = await fetchRemoteFileInfo(rawSettings);
 
   if (!info.exists || !info.content || !info.sha) {
@@ -195,6 +221,10 @@ export const pushToGitHub = async (
   payload: RemotePayload,
   commitMessage?: string
 ): Promise<{ newSha: string }> => {
+  if (rawSettings.provider === 'gitlab') {
+    return pushToGitLab(rawSettings, payload, commitMessage);
+  }
+
   const settings = normalizeGitHubSettings(rawSettings);
   const { token, owner, repo, branch, path } = settings;
 
@@ -311,6 +341,10 @@ export const fetchCustomJsonFromGitHub = async <T>(
   settings: GitHubSettings,
   relativePath: string
 ): Promise<{ payload: T; sha: string } | null> => {
+  if (settings.provider === 'gitlab') {
+    return fetchCustomJsonFromGitLab<T>(settings, relativePath);
+  }
+
   const customSettings: GitHubSettings = {
     ...settings,
     path: relativePath,
@@ -333,6 +367,10 @@ export const pushCustomJsonToGitHub = async <T>(
   payload: T,
   commitMessage?: string
 ): Promise<{ newSha: string }> => {
+  if (settings.provider === 'gitlab') {
+    return pushCustomJsonToGitLab<T>(settings, relativePath, payload, commitMessage);
+  }
+
   const customSettings: GitHubSettings = {
     ...settings,
     path: relativePath,
@@ -377,4 +415,99 @@ export const pushCustomJsonToGitHub = async <T>(
 
   const resJson = await res.json();
   return { newSha: resJson.content?.sha || resJson.commit?.sha };
+};
+
+/**
+ * Test GitHub connectivity and repository access
+ */
+export const testGitHubConnection = async (
+  rawSettings: GitHubSettings
+): Promise<{ success: boolean; message: string; username?: string; detectedBranch?: string }> => {
+  const settings = normalizeGitHubSettings(rawSettings);
+  const { token, owner, repo, branch } = settings;
+
+  if (!token || !owner || !repo) {
+    return { success: false, message: 'Token, Owner, Repo をすべて入力してください' };
+  }
+
+  try {
+    // 1. Fetch user (PAT check)
+    let username = '';
+    try {
+      const userRes = await fetch('https://api.github.com/user', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+        cache: 'no-store',
+      });
+      if (userRes.ok) {
+        const userData = await userRes.json();
+        username = userData.login || '';
+      }
+    } catch {}
+
+    // 2. Fetch repo metadata
+    const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+      cache: 'no-store',
+    });
+
+    if (!repoRes.ok) {
+      let errMsg = `HTTP ${repoRes.status}`;
+      try {
+        const errJson = await repoRes.json();
+        if (errJson.message) errMsg += ` (${errJson.message})`;
+      } catch {}
+      return { success: false, message: `リポジトリ "${owner}/${repo}" にアクセスできませんでした: ${errMsg}`, username };
+    }
+
+    const repoData = await repoRes.json();
+    const defaultBranch = repoData.default_branch || 'main';
+
+    // 3. Test branch
+    const branchRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+        cache: 'no-store',
+      }
+    );
+
+    if (branchRes.ok) {
+      return {
+        success: true,
+        message: `接続成功: ${owner}/${repo} (ブランチ: ${branch})`,
+        username,
+        detectedBranch: branch,
+      };
+    }
+
+    return {
+      success: true,
+      message: `リポジトリ接続成功（指定ブランチ "${branch}" 未検出、デフォルト: "${defaultBranch}"）`,
+      username,
+      detectedBranch: defaultBranch,
+    };
+  } catch (err: any) {
+    return { success: false, message: `GitHub接続エラー: ${err.message || err}` };
+  }
+};
+
+/**
+ * Unified test connection dispatcher for GitHub / GitLab
+ */
+export const testGitConnection = async (
+  settings: GitHubSettings
+): Promise<{ success: boolean; message: string; username?: string; detectedBranch?: string }> => {
+  if (settings.provider === 'gitlab') {
+    return testGitLabConnection(settings);
+  }
+  return testGitHubConnection(settings);
 };

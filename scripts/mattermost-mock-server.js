@@ -181,6 +181,14 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 7. POST /api/mock/reset_flags (Reset sample flags for quick testing)
+  if (method === 'POST' && pathname === '/api/mock/reset_flags') {
+    posts.forEach((p, idx) => {
+      p.is_flagged = idx < 2; // Flag first 2 posts
+    });
+    return sendJson(res, 200, { status: 'OK', flaggedCount: posts.filter((p) => p.is_flagged).length });
+  }
+
   // Ignore favicon
   if (pathname === '/favicon.ico') {
     res.writeHead(204);
@@ -213,6 +221,13 @@ const server = http.createServer((req, res) => {
       <span class="text-slate-300">#dev-core (開発コア)</span>
     </div>
     <div class="flex items-center gap-3">
+      <button
+        onclick="resetFlags()"
+        class="bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 border border-amber-500/50 px-2.5 py-1 rounded text-xs transition-colors flex items-center gap-1 font-semibold"
+        title="初期サンプルの2件に旗マークを再設定します"
+      >
+        <span>🔄 旗を再設定</span>
+      </button>
       <div class="bg-amber-950/60 border border-amber-600/40 text-amber-300 px-2.5 py-1 rounded-full flex items-center gap-1.5 font-medium">
         <span>🚩 旗付き（未処理）:</span>
         <span id="flag-count" class="font-bold text-amber-200 text-sm">${flaggedCount}</span>
@@ -326,6 +341,11 @@ const server = http.createServer((req, res) => {
       const isCurrentlyFlagged = btn.innerText.includes('保存中');
       const endpoint = isCurrentlyFlagged ? \`/api/v4/users/me/posts/\${postId}/unflag\` : \`/api/v4/users/me/posts/\${postId}/flag\`;
       await fetch(endpoint, { method: 'POST' });
+      location.reload();
+    }
+
+    async function resetFlags() {
+      await fetch('/api/mock/reset_flags', { method: 'POST' });
       location.reload();
     }
 
