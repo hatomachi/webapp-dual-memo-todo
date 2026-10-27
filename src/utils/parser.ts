@@ -713,3 +713,150 @@ export const sortTasksByDueDate = (tasks: TaskItem[], _primaryAxis?: PaneType): 
   });
   return cloned.map((t, idx) => ({ ...t, order: idx }));
 };
+
+export interface JumpTargetResult {
+  lineIndex: number;
+  charIndex: number;
+  matchType: 'task' | 'header';
+}
+
+/**
+ * Extract clean task title from a task line, removing bullets and all inline tags.
+ * Returns empty string if the line is not a task line.
+ */
+export const extractTaskTitleFromLine = (line: string): string => {
+  if (isEmptyLine(line) || isCommentLine(line) || isCategoryHeader(line) || isThemeHeader(line)) {
+    return '';
+  }
+  let s = line.trim();
+  // Remove theme tags [Theme] or ［Theme］
+  s = s.replace(/[\[［][^\[\]［］\n]+?[\]］]/g, ' ');
+  // Remove due date tags #MM/DD
+  s = s.replace(DUE_DATE_REGEX, ' ');
+  // Remove inline category tags !category
+  s = s.replace(/(?:^|\s)[!！][^\s\[\]［］#＃!！]+/g, ' ');
+  // Clean leading bullets and trim extra whitespaces
+  return cleanTaskTitle(s).replace(/\s+/g, ' ').trim();
+};
+
+/**
+ * Find the target line and char index in the destination pane text.
+ * Prioritizes matching the specific task line within the matching section.
+ * Falls back to the section header line if the task is not found, or whole-text task match.
+ */
+export const findJumpTargetLine = (
+  targetText: string,
+  targetPaneType: PaneType,
+  targetTagValue: string, // e.g. "日用品" or "ワーク:開発"
+  sourceTaskTitle?: string // e.g. "牛乳を買う"
+): JumpTargetResult | null => {
+  if (!targetText) return null;
+
+  const lines = targetText.split('\n');
+  const targetTagClean = targetTagValue.trim().toLowerCase();
+  const targetTagLastPart = targetTagClean.split(':').pop()?.trim() || targetTagClean;
+  const cleanSourceTitle = sourceTaskTitle ? sourceTaskTitle.trim().toLowerCase() : '';
+
+  let headerLineIndex = -1;
+  let headerCharIndex = 0;
+  let inMatchingSection = false;
+
+  // Track character offsets for each line
+  const lineCharOffsets: number[] = [];
+  let currentOffset = 0;
+  for (let i = 0; i < lines.length; i++) {
+    lineCharOffsets.push(currentOffset);
+    currentOffset += lines[i].length + 1; // +1 for '\n'
+  }
+
+  // Helper to match section name
+  const isSectionMatch = (secName: string): boolean => {
+    const secClean = secName.trim().toLowerCase();
+    if (secClean === targetTagClean) return true;
+    const secLastPart = secClean.split(':').pop()?.trim() || secClean;
+    if (secLastPart === targetTagLastPart) return true;
+    return false;
+  };
+
+  // Helper to match task title
+  const isTaskMatch = (line: string): boolean => {
+    if (!cleanSourceTitle) return false;
+    const title = extractTaskTitleFromLine(line).toLowerCase();
+    if (!title) return false;
+    return (
+      title === cleanSourceTitle ||
+      title.includes(cleanSourceTitle) ||
+      cleanSourceTitle.includes(title)
+    );
+  };
+
+  // Step 1: Scan lines to find task within matching section, or record header
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (targetPaneType === 'theme') {
+      if (isThemeHeader(line)) {
+        const secName = line.trim().replace(/^[\[［]/, '').replace(/[\]］]$/, '').trim();
+        if (isSectionMatch(secName)) {
+          inMatchingSection = true;
+          if (headerLineIndex === -1) {
+            headerLineIndex = i;
+            headerCharIndex = lineCharOffsets[i];
+          }
+        } else {
+          inMatchingSection = false;
+        }
+        continue;
+      }
+    } else {
+      if (isCategoryHeader(line)) {
+        const secName = line.trim().replace(/^[!！]/, '').trim();
+        if (isSectionMatch(secName)) {
+          inMatchingSection = true;
+          if (headerLineIndex === -1) {
+            headerLineIndex = i;
+            headerCharIndex = lineCharOffsets[i];
+          }
+        } else {
+          inMatchingSection = false;
+        }
+        continue;
+      }
+    }
+
+    // If we are currently inside the matching section and found the task
+    if (inMatchingSection && isTaskMatch(line)) {
+      return {
+        lineIndex: i,
+        charIndex: lineCharOffsets[i],
+        matchType: 'task',
+      };
+    }
+  }
+
+  // Step 2: Fallback to section header if found
+  if (headerLineIndex !== -1) {
+    return {
+      lineIndex: headerLineIndex,
+      charIndex: headerCharIndex,
+      matchType: 'header',
+    };
+  }
+
+  // Step 3: Global fallback - find matching task anywhere in target text
+  if (cleanSourceTitle) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (isTaskMatch(line)) {
+        return {
+          lineIndex: i,
+          charIndex: lineCharOffsets[i],
+          matchType: 'task',
+        };
+      }
+    }
+  }
+
+  return null;
+};
+

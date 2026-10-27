@@ -7,6 +7,7 @@ import {
   Save,
 } from 'lucide-react';
 import { InlineTagInfo, SuggestionTrigger, HierarchicalOption } from '../utils/tagHelper';
+import { PaneType } from '../types/todo';
 import { QuickDatePalette } from './QuickDatePalette';
 import { ActiveTagPills } from './ActiveTagPills';
 import { TagSuggestPalette } from './TagSuggestPalette';
@@ -22,8 +23,10 @@ interface QuickToolbarProps {
   isKeyboardOpen?: boolean;
   // Inline tag pills & suggestion palette props
   activeLineTags?: InlineTagInfo[];
+  currentPaneType?: PaneType;
   onRemoveActiveTag?: (tag: InlineTagInfo) => void;
   onClickActiveTag?: (tag: InlineTagInfo) => void;
+  onJumpTag?: (tag: InlineTagInfo) => void;
   suggestionTrigger?: SuggestionTrigger | null;
   categoryOptions?: HierarchicalOption[];
   themeOptions?: HierarchicalOption[];
@@ -113,8 +116,10 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
   isDirty,
   isKeyboardOpen = false,
   activeLineTags = [],
+  currentPaneType,
   onRemoveActiveTag,
   onClickActiveTag,
+  onJumpTag,
   suggestionTrigger = null,
   categoryOptions = [],
   themeOptions = [],
@@ -176,12 +181,14 @@ export const QuickToolbar: React.FC<QuickToolbarProps> = ({
         }}
       />
 
-      {/* 3. Active Line Tag Pills (shows tags in current cursor line with 1-tap delete) */}
+      {/* 3. Active Line Tag Pills (shows tags in current cursor line with 1-tap delete & jump) */}
       {!suggestionTrigger && activeLineTags.length > 0 && onRemoveActiveTag && (
         <ActiveTagPills
           tags={activeLineTags}
+          currentPaneType={currentPaneType}
           onRemoveTag={onRemoveActiveTag}
           onClickTag={handleTagClick}
+          onJumpTag={onJumpTag}
         />
       )}
 

@@ -45,6 +45,7 @@ export interface MemoPaneHandle {
   removeTagFromCurrentLine: (tag: InlineTagInfo) => void;
   replaceTagInCurrentLine: (tag: InlineTagInfo, newRawTag: string) => void;
   applySuggestionAtCursor: (suggestedValue: string, trigger: SuggestionTrigger) => void;
+  jumpToLine: (lineIndex: number, charIndex?: number) => void;
 }
 
 interface MemoPaneProps {
@@ -69,6 +70,7 @@ interface MemoPaneProps {
   completedCountByTheme?: Record<string, number>;
   onOpenCompletedDrawer?: (themeName?: string) => void;
   onArchiveTheme?: (themeName: string) => void;
+  onJumpToOppositePane?: (tag: InlineTagInfo, sourceLineText: string) => void;
 }
 
 const NAVIGATION_KEYS = new Set([
@@ -109,6 +111,7 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       completedCountByTheme,
       onOpenCompletedDrawer,
       onArchiveTheme,
+      onJumpToOppositePane,
     },
     ref
   ) => {
@@ -117,6 +120,10 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const backdropRef = useRef<HTMLDivElement>(null);
     const notepadContainerRef = useRef<HTMLDivElement>(null);
+
+    // Track Cmd (Mac) / Ctrl (Windows) key for hyperlinking tags
+    const [isModifierKeyPressed, setIsModifierKeyPressed] = useState<boolean>(false);
+    const [flashingLineIndex, setFlashingLineIndex] = useState<number | null>(null);
 
     // Caret coordinates for inline floating suggest popover
     const [caretCoords, setCaretCoords] = useState<{ top: number; left: number; height: number }>({
@@ -133,6 +140,35 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
     const sections = useMemo(() => {
       return extractSectionsFromText(text, type);
     }, [text, type]);
+
+    // Global listener for Cmd (Mac) / Ctrl (Windows) key
+    useEffect(() => {
+      const handleKeyDownWindow = (e: KeyboardEvent) => {
+        if (e.key === 'Meta' || e.key === 'Control') {
+          setIsModifierKeyPressed(true);
+        }
+      };
+
+      const handleKeyUpWindow = (e: KeyboardEvent) => {
+        if (e.key === 'Meta' || e.key === 'Control') {
+          setIsModifierKeyPressed(false);
+        }
+      };
+
+      const handleBlurWindow = () => {
+        setIsModifierKeyPressed(false);
+      };
+
+      window.addEventListener('keydown', handleKeyDownWindow);
+      window.addEventListener('keyup', handleKeyUpWindow);
+      window.addEventListener('blur', handleBlurWindow);
+
+      return () => {
+        window.removeEventListener('keydown', handleKeyDownWindow);
+        window.removeEventListener('keyup', handleKeyUpWindow);
+        window.removeEventListener('blur', handleBlurWindow);
+      };
+    }, []);
 
     // Update caret coordinates relative to visible notepad area
     const updateCaretCoordinates = useCallback(() => {
@@ -631,6 +667,44 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
       applySuggestionAtCursor: (suggestedValue: string, trigger: SuggestionTrigger) => {
         applySuggestion(suggestedValue, trigger);
       },
+
+      jumpToLine: (lineIndex: number, charIndex?: number) => {
+        const textarea = textareaRef.current;
+        const backdrop = backdropRef.current;
+        if (!textarea) return;
+
+        const lines = textarea.value.split('\n');
+        if (lineIndex < 0 || lineIndex >= lines.length) return;
+
+        let pos = 0;
+        if (charIndex !== undefined) {
+          pos = charIndex;
+        } else {
+          for (let i = 0; i < lineIndex; i++) {
+            pos += lines[i].length + 1;
+          }
+        }
+
+        textarea.focus({ preventScroll: true });
+        textarea.setSelectionRange(pos, pos);
+
+        const lineEl = backdrop?.children[lineIndex] as HTMLElement | undefined;
+        const targetScrollTop = lineEl
+          ? Math.max(0, lineEl.offsetTop - 30)
+          : Math.max(0, (lineIndex - 1) * 20);
+
+        textarea.scrollTo({
+          top: targetScrollTop,
+          behavior: 'smooth',
+        });
+
+        setFlashingLineIndex(lineIndex);
+        setTimeout(() => {
+          setFlashingLineIndex((cur) => (cur === lineIndex ? null : cur));
+        }, 1400);
+
+        updateCursorState();
+      },
     }));
 
     // Jump to section line and scroll smoothly within native textarea
@@ -956,28 +1030,48 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                 }
 
                 const tokens = splitLineIntoTokens(line);
+                const isFlashing = idx === flashingLineIndex;
+                const flashClass = isFlashing ? 'notepad-line-flash' : '';
 
                 return (
-                  <div key={idx} className={`notepad-line ${lineBgClass}`}>
+                  <div key={idx} className={`notepad-line ${lineBgClass} ${flashClass}`}>
                     {tokens.map((token, tIdx) => {
                       if (!token.tag) {
                         return <React.Fragment key={tIdx}>{token.text}</React.Fragment>;
                       }
 
+                      const isJumpable =
+                        (type === 'category' && token.tag.type === 'theme') ||
+                        (type === 'theme' && token.tag.type === 'category');
+
                       let chipClass = '';
+                      let chipTitle: string | undefined = undefined;
+
                       if (token.tag.type === 'date') {
                         chipClass =
                           'text-emerald-700 border-b-[1.5px] border-dotted border-emerald-600/70 pb-[1px]';
                       } else if (token.tag.type === 'theme') {
-                        chipClass =
-                          'text-blue-700 border-b-[1.5px] border-dotted border-blue-600/70 pb-[1px]';
+                        if (isJumpable && isModifierKeyPressed) {
+                          chipClass =
+                            'text-blue-800 bg-blue-100/90 underline decoration-blue-600 decoration-solid font-medium pb-[1px] rounded-xs px-0.5';
+                          chipTitle = 'Cmd+クリック（Ctrl+クリック）で右ペインの該当行へジャンプ';
+                        } else {
+                          chipClass =
+                            'text-blue-700 border-b-[1.5px] border-dotted border-blue-600/70 pb-[1px]';
+                        }
                       } else if (token.tag.type === 'category') {
-                        chipClass =
-                          'text-amber-800 border-b-[1.5px] border-dotted border-amber-600/70 pb-[1px]';
+                        if (isJumpable && isModifierKeyPressed) {
+                          chipClass =
+                            'text-amber-900 bg-amber-100/90 underline decoration-amber-600 decoration-solid font-medium pb-[1px] rounded-xs px-0.5';
+                          chipTitle = 'Cmd+クリック（Ctrl+クリック）で左ペインの該当行へジャンプ';
+                        } else {
+                          chipClass =
+                            'text-amber-800 border-b-[1.5px] border-dotted border-amber-600/70 pb-[1px]';
+                        }
                       }
 
                       return (
-                        <span key={tIdx} className={chipClass}>
+                        <span key={tIdx} className={chipClass} title={chipTitle}>
                           {token.text}
                         </span>
                       );
@@ -1000,7 +1094,38 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
                 });
               }}
               onScroll={syncBackdropScroll}
-              onClick={() => {
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey) {
+                  const textarea = textareaRef.current;
+                  if (textarea) {
+                    const clickPos = textarea.selectionStart;
+                    const val = textarea.value;
+                    const lineStart = val.lastIndexOf('\n', clickPos - 1) + 1;
+                    const lineEndIdx = val.indexOf('\n', clickPos);
+                    const lineEnd = lineEndIdx === -1 ? val.length : lineEndIdx;
+                    const currentLine = val.substring(lineStart, lineEnd);
+                    const col = clickPos - lineStart;
+
+                    const tags = parseLineInlineTags(currentLine);
+                    const clickedTag = tags.find(
+                      (t) => col >= t.startIndex && col <= t.endIndex
+                    );
+
+                    if (clickedTag) {
+                      const isJumpable =
+                        (type === 'category' && clickedTag.type === 'theme') ||
+                        (type === 'theme' && clickedTag.type === 'category');
+
+                      if (isJumpable) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onJumpToOppositePane?.(clickedTag, currentLine);
+                        return;
+                      }
+                    }
+                  }
+                }
+
                 requestAnimationFrame(() => {
                   ensureCaretVisible();
                   updateCursorState();
@@ -1022,7 +1147,9 @@ export const MemoPane = forwardRef<MemoPaneHandle, MemoPaneProps>(
               autoCapitalize="off"
               autoComplete="off"
               autoCorrect="off"
-              className="notepad-layer absolute inset-0 w-full h-full overflow-y-auto overflow-x-hidden pt-2.5 pb-16 pl-3 sm:pl-4 pr-3 sm:pr-4 text-transparent caret-slate-800 selection:bg-blue-500/25 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-300"
+              className={`notepad-layer absolute inset-0 w-full h-full overflow-y-auto overflow-x-hidden pt-2.5 pb-16 pl-3 sm:pl-4 pr-3 sm:pr-4 text-transparent caret-slate-800 selection:bg-blue-500/25 bg-transparent resize-none border-none outline-none focus:ring-0 placeholder:text-slate-300 ${
+                isModifierKeyPressed ? 'cursor-pointer' : ''
+              }`}
             />
 
             {/* Inline Floating Suggestion Popover (Desktop only) */}

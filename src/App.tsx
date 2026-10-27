@@ -10,6 +10,8 @@ import {
   extractCategorySections,
   extractThemeSections,
   cleanTaskTitle,
+  extractTaskTitleFromLine,
+  findJumpTargetLine,
   generateId,
   DUE_DATE_REGEX,
 } from './utils/parser';
@@ -236,6 +238,45 @@ export const App: React.FC = () => {
       setToastMessage((cur) => (cur === msg ? null : cur));
     }, 2500);
   };
+
+  // Jump to opposite pane via inline tags (#date, [theme], !category)
+  const handleJumpToOppositePane = useCallback(
+    (fromPane: PaneType, tag: InlineTagInfo, sourceLineText?: string) => {
+      const targetPane: PaneType = fromPane === 'category' ? 'theme' : 'category';
+      const targetText = targetPane === 'theme' ? themeTextRef.current : categoryTextRef.current;
+
+      const sourceTaskTitle = sourceLineText ? extractTaskTitleFromLine(sourceLineText) : '';
+      const jumpResult = findJumpTargetLine(
+        targetText,
+        targetPane,
+        tag.value,
+        sourceTaskTitle
+      );
+
+      if (!jumpResult) {
+        const targetLabel = targetPane === 'theme' ? `[${tag.value}]` : `!${tag.value}`;
+        showToast(`反対側に ${targetLabel} が見つかりませんでした。Ctrl+Sで反映してください`);
+        return;
+      }
+
+      // If mobile view, switch to target pane tab first
+      const isMobile = window.innerWidth < 640;
+      if (isMobile) {
+        setActiveMobilePane(targetPane);
+      }
+
+      // Execute jump on destination pane
+      const targetHandle = targetPane === 'theme' ? themePaneRef.current : categoryPaneRef.current;
+      setTimeout(() => {
+        targetHandle?.jumpToLine(jumpResult.lineIndex, jumpResult.charIndex);
+      }, isMobile ? 80 : 20);
+
+      const matchLabel = jumpResult.matchType === 'task' ? '該当タスク' : 'セクション見出し';
+      const destName = targetPane === 'theme' ? `[${tag.value}]` : `!${tag.value}`;
+      showToast(`${destName} の${matchLabel}へジャンプしました`);
+    },
+    []
+  );
 
   // Save to localStorage
   const saveToStorage = useCallback(
@@ -1571,6 +1612,9 @@ export const App: React.FC = () => {
               categoryOptions={categoryOptions}
               themeOptions={themeOptions}
               onOpenCalendar={handleOpenCalendar}
+              onJumpToOppositePane={(tag, lineText) =>
+                handleJumpToOppositePane('category', tag, lineText)
+              }
             />
           </div>
 
@@ -1613,6 +1657,9 @@ export const App: React.FC = () => {
                 setIsCompletedDrawerOpen(true);
               }}
               onArchiveTheme={handleArchiveTheme}
+              onJumpToOppositePane={(tag, lineText) =>
+                handleJumpToOppositePane('theme', tag, lineText)
+              }
             />
           </div>
         </div>
@@ -1632,8 +1679,13 @@ export const App: React.FC = () => {
         isDirty={dirtyPane !== null}
         isKeyboardOpen={viewport.isKeyboardOpen}
         activeLineTags={activeLineTags}
+        currentPaneType={focusedPane || activeMobilePane}
         onRemoveActiveTag={(tag) => {
           getActivePaneHandle()?.removeTagFromCurrentLine(tag);
+        }}
+        onJumpTag={(tag) => {
+          const curPane = focusedPane || activeMobilePane;
+          handleJumpToOppositePane(curPane, tag);
         }}
         onClickActiveTag={(tag) => {
           if (tag.type === 'category' || tag.type === 'theme') {

@@ -1,17 +1,22 @@
 import React, { useRef } from 'react';
 import { InlineTagInfo } from '../utils/tagHelper';
-import { X, Calendar, Package, Tag } from 'lucide-react';
+import { PaneType } from '../types/todo';
+import { X, Calendar, Package, Tag, ArrowUpRight } from 'lucide-react';
 
 interface ActiveTagPillsProps {
   tags: InlineTagInfo[];
+  currentPaneType?: PaneType;
   onRemoveTag: (tag: InlineTagInfo) => void;
   onClickTag?: (tag: InlineTagInfo) => void;
+  onJumpTag?: (tag: InlineTagInfo) => void;
 }
 
 export const ActiveTagPills: React.FC<ActiveTagPillsProps> = ({
   tags,
+  currentPaneType,
   onRemoveTag,
   onClickTag,
+  onJumpTag,
 }) => {
   const isPointerDownRef = useRef(false);
 
@@ -28,6 +33,18 @@ export const ActiveTagPills: React.FC<ActiveTagPillsProps> = ({
     e.preventDefault();
     e.stopPropagation();
     onRemoveTag(tag);
+  };
+
+  const handlePillClick = (tag: InlineTagInfo) => {
+    const isJumpable =
+      (currentPaneType === 'category' && tag.type === 'theme') ||
+      (currentPaneType === 'theme' && tag.type === 'category');
+
+    if (isJumpable && onJumpTag) {
+      onJumpTag(tag);
+    } else {
+      onClickTag?.(tag);
+    }
   };
 
   const renderTagContent = (tag: InlineTagInfo) => {
@@ -72,29 +89,55 @@ export const ActiveTagPills: React.FC<ActiveTagPillsProps> = ({
       </span>
 
       <div className="flex items-center gap-1.5 min-w-0">
-        {tags.map((tag, idx) => (
-          <div
-            key={`${tag.type}-${tag.startIndex}-${idx}`}
-            className="flex items-center gap-1 px-2 py-0.5 rounded bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 font-mono shadow-2xs transition-colors cursor-pointer flex-shrink-0"
-            onClick={() => onClickTag?.(tag)}
-            title="タップで変更、✕で削除"
-          >
-            {renderTagContent(tag)}
+        {tags.map((tag, idx) => {
+          const isJumpable =
+            (currentPaneType === 'category' && tag.type === 'theme') ||
+            (currentPaneType === 'theme' && tag.type === 'category');
 
-            <button
-              type="button"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-              onPointerUp={(e) => handleRemove(e, tag)}
-              className="ml-0.5 p-0.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 active:bg-slate-200 rounded transition-colors cursor-pointer"
-              title="タグをワン操作で削除"
+          const jumpDestLabel =
+            currentPaneType === 'category' ? '右ペイン（テーマ）' : '左ペイン（分類）';
+
+          return (
+            <div
+              key={`${tag.type}-${tag.startIndex}-${idx}`}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded border font-mono shadow-2xs transition-colors cursor-pointer flex-shrink-0 ${
+                isJumpable
+                  ? 'bg-blue-50/70 hover:bg-blue-100/80 border-blue-200 text-blue-900'
+                  : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-slate-300'
+              }`}
+              onClick={() => handlePillClick(tag)}
+              title={
+                isJumpable
+                  ? `タップで${jumpDestLabel}の該当行へジャンプ、✕で削除`
+                  : 'タップで変更、✕で削除'
+              }
             >
-              <X className="w-3 h-3" />
-            </button>
-          </div>
-        ))}
+              {renderTagContent(tag)}
+
+              {isJumpable && (
+                <span
+                  className="text-blue-500 hover:text-blue-700 flex items-center ml-0.5"
+                  title={`${jumpDestLabel}へジャンプ`}
+                >
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </span>
+              )}
+
+              <button
+                type="button"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onPointerUp={(e) => handleRemove(e, tag)}
+                className="ml-0.5 p-0.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 active:bg-slate-200 rounded transition-colors cursor-pointer"
+                title="タグをワン操作で削除"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
